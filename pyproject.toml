@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "multiagentic-eng"
+version = "0.1.0"
+description = "Provider-independent engineering orchestration with durable verification"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.12"
+dependencies = ["pydantic>=2.10,<3", "typer>=0.16,<1", "PyYAML>=6.0.2,<7"]
+
+[project.urls]
+Repository = "https://github.com/Chagatai404/multiagentic"
+
+[project.optional-dependencies]
+dev = ["pytest>=8.3,<10", "ruff>=0.12", "mypy>=1.15", "types-PyYAML>=6", "build>=1.2"]
+
+[project.scripts]
+eng = "eng.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-ra"
+markers = ["live: opt-in paid provider integration"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+packages = ["eng"]
+mypy_path = "src"

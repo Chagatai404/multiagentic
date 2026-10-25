@@ -1,0 +1,17 @@
+.venv/
+.cache/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+build/
+dist/
+.engineering/state/
+.engineering/worktrees/
+.engineering/artifacts/
+.engineering/locks/
+.env
+.env.*
+!.env.example

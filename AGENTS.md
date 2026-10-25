@@ -1,0 +1,26 @@
+# Agent instructions
+
+Repository and tests are implementation truth. Read ARCHITECTURE.md before changing
+subsystem boundaries. Before substantial work inspect status, branch, worktrees and
+recent commits. Check configured shared coordination state. Do not edit another
+agent's active files or work concurrently with Claude in the same directory; use an
+isolated agent/codex/<task> branch/worktree if another agent is active. Git records
+completed work; branch existence alone does not mean integration.
+
+Keep models/policy pure. Inject providers/storage at the engine boundary. Invoke
+processes with argv arrays, never shell interpolation. No provider-specific flags in
+the engine. Verify installed help and official docs before altering adapter flags.
+Keep missing usage unknown. No automatic push, deployment, destructive cleanup, or
+permission bypass. Worktrees are not security sandboxes. Do not log credentials.
+
+Run focused pytest coverage, ruff and mypy for affected changes; inspect actual diffs.
+Run full tests and a package build before a milestone handoff. Live model tests are
+opt-in, time/call bounded and potentially billable. Report skipped/unavailable checks.
+Do not claim deferred multi-agent roles, hooks or adapters are operational.
+
+Permanent Obsidian vault: C:/Users/ASUS/Obsidian/Knowledge. Use the Obsidian skill
+for relevant durable knowledge; consult only the corresponding project note when
+useful, never the entire vault. No secrets or session logs in Obsidian. Graphify maps
+code relationships, not vault knowledge. Claude-mem is Claude Code's session memory.
+See the user's personal instructions for Research OS tasks; this package's engineering
+state is separate from Research OS and human knowledge records.

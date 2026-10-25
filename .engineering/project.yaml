@@ -1,0 +1,15 @@
+schema_version: 1
+name: multiagentic
+languages: [python]
+provider: codex
+checks:
+  - name: lint
+    argv: ['{python}', '-m', ruff, check, .]
+    timeout_seconds: 30
+    required: true
+    confirmed: true
+  - name: tests
+    argv: ['{python}', '-m', pytest, '-q']
+    timeout_seconds: 180
+    required: true
+    confirmed: true
