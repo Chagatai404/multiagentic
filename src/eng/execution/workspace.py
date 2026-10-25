@@ -12,16 +12,20 @@ from eng.core.models import Task
 
 
 def git(repository: Path, *arguments: str) -> str:
-    result = subprocess.run(
-        ["git", "-C", str(repository), *arguments],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=30,
-        check=False,
-        env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
-    )
+    try:
+        result = subprocess.run(
+            # Windows Git otherwise fails beyond MAX_PATH in deep worktrees and role snapshots.
+            ["git", "-c", "core.longpaths=true", "-C", str(repository), *arguments],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+            check=False,
+            env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+        )
+    except subprocess.TimeoutExpired as error:
+        raise ValueError(f"Git operation timed out: {arguments[0]}") from error
     if result.returncode:
         raise ValueError(result.stderr.strip() or "Git operation failed")
     return result.stdout.strip()

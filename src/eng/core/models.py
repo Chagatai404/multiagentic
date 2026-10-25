@@ -43,6 +43,65 @@ class Role(StrEnum):
     REVIEWER = "reviewer"
 
 
+class TaskType(StrEnum):
+    CHANGE = "change"
+    QUESTION = "question"
+
+
+class Complexity(StrEnum):
+    SMALL = "small"
+    MEDIUM = "medium"
+    COMPLEX = "complex"
+
+
+class Risk(StrEnum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+
+class Classification(Contract):
+    task_type: TaskType
+    complexity: Complexity
+    risk: Risk
+    reasons: list[str] = Field(default_factory=list)
+
+
+class ClassificationOverrides(Contract):
+    task_type: TaskType | None = None
+    complexity: Complexity | None = None
+    risk: Risk | None = None
+
+
+class WorkflowPolicy(Contract):
+    max_repairs: int = Field(default=2, ge=0, le=10)
+
+
+class WorkflowDecision(Contract):
+    planner: bool
+    reviewer: bool
+    approval_required: bool
+    max_repairs: int = Field(default=2, ge=0, le=10)
+
+
+class RoleHandoff(Contract):
+    role: Role
+    summary: str
+    invocation_id: str
+    artifact: str | None = None
+    verdict: Literal["pass", "changes_requested"] | None = None
+    findings: list[str] = Field(default_factory=list)
+    steps: list[str] = Field(default_factory=list)
+    root_cause: str | None = None
+    changed_files: list[str] = Field(default_factory=list)
+
+
+class RepairAttempt(Contract):
+    number: int = Field(ge=1)
+    failure_signature: str
+    handoff: RoleHandoff | None = None
+
+
 class Usage(Contract):
     input_tokens: int | None = Field(default=None, ge=0)
     output_tokens: int | None = Field(default=None, ge=0)
@@ -93,6 +152,7 @@ class ProjectConfig(Contract):
         ]
     )
     budgets: Budgets = Field(default_factory=Budgets)
+    workflow: WorkflowPolicy = Field(default_factory=WorkflowPolicy)
     provider: str = "codex"
 
     @field_validator("checks")
@@ -111,6 +171,10 @@ class TaskSpec(Contract):
     model: str | None = None
     budgets: Budgets = Field(default_factory=Budgets)
     context_paths: list[str] = Field(default_factory=list)
+    classification_overrides: ClassificationOverrides = Field(
+        default_factory=ClassificationOverrides
+    )
+    human_approved: bool = False
 
     @field_validator("description", "acceptance")
     @classmethod
@@ -184,12 +248,23 @@ class Task(Contract):
     workspace: Path | None = None
     base_commit: str | None = None
     execution_id: str | None = None
-    checkpoint: Literal["created", "prepared", "provider_started", "implemented", "verified"] = (
-        "created"
-    )
+    checkpoint: Literal[
+        "created", "prepared", "planned", "provider_started", "implemented", "verified", "reviewed"
+    ] = "created"
     cancel_requested: bool = False
     provider_calls: int = 0
     elapsed_seconds: float = 0
     message: str = ""
     verification: list[VerificationResult] = Field(default_factory=list)
     usage: Usage = Field(default_factory=Usage)
+    classification: Classification | None = None
+    workflow: WorkflowDecision | None = None
+    handoffs: list[RoleHandoff] = Field(default_factory=list)
+    repairs: list[RepairAttempt] = Field(default_factory=list)
+    pending_role: Role | None = None
+    pending_invocation_id: str | None = None
+    next_role: Role | None = None
+    planning_completed: bool = False
+    review_passed: bool = False
+    verified_digest: str | None = None
+    review_digest: str | None = None

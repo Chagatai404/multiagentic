@@ -1,7 +1,8 @@
+import json
 from collections.abc import Callable
 from pathlib import Path
 
-from eng.core.models import Capabilities, ProviderRequest, ProviderResult
+from eng.core.models import Capabilities, ProviderRequest, ProviderResult, Role
 from eng.execution.workspace import safe_path
 
 
@@ -22,6 +23,29 @@ class FakeProvider:
     ) -> ProviderResult:
         if cancelled():
             return ProviderResult(status="cancelled", error_kind="cancelled")
+        if request.role == Role.VERIFIER:
+            raise ValueError("Verifier does not use a model provider")
+        if request.role == Role.PLANNER:
+            return ProviderResult(
+                status="success",
+                summary=json.dumps(
+                    {
+                        "summary": "Deterministic fixture plan",
+                        "steps": ["Apply configured fixture edits", "Run configured checks"],
+                    }
+                ),
+            )
+        if request.role == Role.REVIEWER:
+            return ProviderResult(
+                status="success",
+                summary=json.dumps(
+                    {
+                        "summary": "Deterministic fixture review",
+                        "verdict": "pass",
+                        "findings": [],
+                    }
+                ),
+            )
         for relative, content in self.changes.items():
             target = safe_path(request.workspace, relative)
             target.parent.mkdir(parents=True, exist_ok=True)

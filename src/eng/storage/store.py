@@ -3,7 +3,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from eng.core.models import State, Task, now
+from eng.core.models import Role, State, Task, identity, now
 from eng.core.policy import TERMINAL, validate_transition
 from eng.execution.process import redact, redact_data
 
@@ -30,6 +30,18 @@ MIGRATIONS = [
                            task_id TEXT NOT NULL REFERENCES tasks(id), execution_id TEXT,
                            path TEXT NOT NULL, kind TEXT NOT NULL);
     CREATE INDEX events_task ON events(task_id, sequence);
+    """,
+    """
+    ALTER TABLE invocations RENAME TO invocations_v1;
+    CREATE TABLE invocations (invocation_id TEXT PRIMARY KEY,
+                              execution_id TEXT NOT NULL REFERENCES executions(id),
+                              role TEXT NOT NULL, provider TEXT NOT NULL,
+                              status TEXT NOT NULL, result TEXT NOT NULL);
+    INSERT INTO invocations(invocation_id,execution_id,role,provider,status,result)
+      SELECT execution_id,execution_id,'engineer',provider,
+             COALESCE(json_extract(result,'$.status'),'unknown'),result FROM invocations_v1;
+    DROP TABLE invocations_v1;
+    CREATE INDEX invocations_execution ON invocations(execution_id);
     """,
 ]
 
@@ -158,15 +170,84 @@ class Store:
         ).fetchone()
         return bool(row[0])
 
-    def invocation(self, task: Task, result_json: str) -> None:
+    def begin_invocation(self, task: Task) -> None:
+        """Atomically reserve the side effect and save its call/retry counters."""
+        if task.pending_invocation_id is None or task.pending_role is None:
+            raise ValueError("Pending invocation identity and role are required")
+        with self.connection:
+            self.save(task)
+            self.connection.execute(
+                "INSERT INTO invocations VALUES (?,?,?,?,?,?)",
+                (
+                    task.pending_invocation_id,
+                    task.execution_id,
+                    task.pending_role.value,
+                    task.spec.provider,
+                    "started",
+                    "{}",
+                ),
+            )
+            self._event(
+                task,
+                "provider_started",
+                {
+                    "invocation_id": task.pending_invocation_id,
+                    "role": task.pending_role.value,
+                    "provider_calls": task.provider_calls,
+                },
+            )
+
+    def invocation(
+        self,
+        task: Task,
+        result_json: str,
+        *,
+        invocation_id: str | None = None,
+        role: Role = Role.ENGINEER,
+    ) -> None:
+        """Record a result; legacy callers may omit the per-call identity."""
+        payload = redact_data(json.loads(result_json))
         with self.connection:
             self.connection.execute(
-                "INSERT INTO invocations VALUES (?,?,?)",
+                "INSERT INTO invocations VALUES (?,?,?,?,?,?) "
+                "ON CONFLICT(invocation_id) DO UPDATE SET status=excluded.status, "
+                "result=excluded.result",
                 (
+                    invocation_id or task.pending_invocation_id or identity(),
                     task.execution_id,
+                    role.value,
                     task.spec.provider,
-                    json.dumps(redact_data(json.loads(result_json))),
+                    payload.get("status", "unknown"),
+                    json.dumps(payload),
                 ),
+            )
+
+    def complete_invocation(
+        self,
+        task: Task,
+        result_json: str,
+        invocation_id: str,
+        role: Role,
+    ) -> None:
+        """Commit successful handoff/checkpoint and result in one transaction."""
+        payload = redact_data(json.loads(result_json))
+        with self.connection:
+            cursor = self.connection.execute(
+                "UPDATE invocations SET status=?,result=? WHERE invocation_id=?",
+                (payload.get("status", "unknown"), json.dumps(payload), invocation_id),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("Cannot finish an invocation without a durable reservation")
+            self.save(task)
+            self._event(
+                task,
+                "provider_finished",
+                {
+                    "invocation_id": invocation_id,
+                    "role": role.value,
+                    "status": payload.get("status"),
+                    "checkpoint": task.checkpoint,
+                },
             )
 
     def verification(self, task: Task) -> None:

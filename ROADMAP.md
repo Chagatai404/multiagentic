@@ -8,9 +8,12 @@
   capability registry and explicit provider switching, conservative command discovery,
   and Python/JavaScript portability through both adapter transports using CLI emulators.
   Successful live editing is not established. Detected commands require confirmation.
-- **M3 - next:** deterministic task/risk classification, role registry and bounded planner,
-  debugger and independent reviewer workflows; repeat-failure detection and targeted retries.
-- **M4:** supported opt-in hooks, normalized trigger envelopes, idempotency keys,
+- **M3 - verified offline:** deterministic independent task-type,
+  complexity and risk classification; role registry, bounded planning and independent
+  review, explicit high-risk task approval, targeted repairs and repeat-failure stops.
+  Per-role invocation persistence retains conservative recovery. No live validation
+  claimed; `eng plan`/`eng debug` deferred.
+- **M4 - next:** supported opt-in hooks, normalized trigger envelopes, idempotency keys,
   deduplication and tested reentrancy guards. No automatic interception claims.
 - **M5:** complete stream-to-disk artifacts, provider usage aggregation, pricing estimates
   separated from measured spend, finer budgets, cache invalidation and reproducible A/B/C

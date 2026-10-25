@@ -5,15 +5,44 @@ from eng.core.models import State, VerificationResult
 TERMINAL = frozenset({State.COMPLETED, State.FAILED, State.CANCELLED})
 FLOW: dict[State, set[State]] = {
     State.CREATED: {State.CLASSIFYING},
-    State.CLASSIFYING: {State.PREPARING_CONTEXT},
-    State.PREPARING_CONTEXT: {State.IMPLEMENTING, State.PLANNING},
-    State.PLANNING: {State.IMPLEMENTING},
+    State.CLASSIFYING: {State.PREPARING_CONTEXT, State.BLOCKED},
+    State.PREPARING_CONTEXT: {
+        State.IMPLEMENTING,
+        State.PLANNING,
+        State.VERIFYING,
+        State.REVIEWING,
+        State.DEBUGGING,
+    },
+    State.PLANNING: {State.IMPLEMENTING, State.BLOCKED},
     State.IMPLEMENTING: {State.VERIFYING},
-    State.VERIFYING: {State.COMPLETED, State.REVIEWING, State.DEBUGGING, State.BLOCKED},
-    State.REVIEWING: {State.COMPLETED, State.DEBUGGING},
+    State.VERIFYING: {
+        State.COMPLETED,
+        State.REVIEWING,
+        State.DEBUGGING,
+        State.BLOCKED,
+        State.PLANNING,
+    },
+    State.REVIEWING: {State.COMPLETED, State.DEBUGGING, State.BLOCKED},
     State.DEBUGGING: {State.VERIFYING},
-    State.PAUSED: {State.CLASSIFYING, State.PREPARING_CONTEXT, State.VERIFYING},
-    State.BLOCKED: {State.VERIFYING},
+    State.PAUSED: {
+        State.CLASSIFYING,
+        State.PREPARING_CONTEXT,
+        State.PLANNING,
+        State.IMPLEMENTING,
+        State.VERIFYING,
+        State.REVIEWING,
+        State.DEBUGGING,
+        State.BLOCKED,
+    },
+    State.BLOCKED: {
+        State.CLASSIFYING,
+        State.PREPARING_CONTEXT,
+        State.PLANNING,
+        State.IMPLEMENTING,
+        State.VERIFYING,
+        State.REVIEWING,
+        State.DEBUGGING,
+    },
 }
 
 

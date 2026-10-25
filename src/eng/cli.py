@@ -9,7 +9,15 @@ import typer
 from pydantic import ValidationError
 
 from eng.core.engine import Engine
-from eng.core.models import State, Task, TaskSpec
+from eng.core.models import (
+    ClassificationOverrides,
+    Complexity,
+    Risk,
+    State,
+    Task,
+    TaskSpec,
+    TaskType,
+)
 from eng.core.policy import TERMINAL
 from eng.execution.process import redact, redact_data
 from eng.execution.workspace import repository_root, task_lock
@@ -94,8 +102,16 @@ def run(
         float | None, typer.Option(min=0.01, help="Provider invocation timeout")
     ] = None,
     user_config: Annotated[Path | None, typer.Option(help="Optional user defaults YAML")] = None,
+    task_type: Annotated[TaskType | None, typer.Option(help="Explicit task type")] = None,
+    complexity: Annotated[Complexity | None, typer.Option(help="Minimum task complexity")] = None,
+    risk: Annotated[Risk | None, typer.Option(help="Minimum task risk")] = None,
+    max_repairs: Annotated[int | None, typer.Option(min=0, max=10)] = None,
+    model_calls: Annotated[int | None, typer.Option(min=1, max=100)] = None,
+    approve_high_risk: Annotated[
+        bool, typer.Option(help="Explicitly approve this high-risk task")
+    ] = False,
 ) -> None:
-    """Run one engineer and deterministic checks; print the persisted task as JSON."""
+    """Run an adaptive workflow with deterministic checks; print the persisted task."""
     store = None
     try:
         if os.environ.get("ENG_ACTIVE"):
@@ -107,6 +123,10 @@ def run(
             budget.wall_seconds = wall_seconds
         if provider_seconds is not None:
             budget.provider_seconds = provider_seconds
+        if model_calls is not None:
+            budget.model_calls = model_calls
+        if max_repairs is not None:
+            config.workflow.max_repairs = max_repairs
         selected = provider_for(provider or config.provider, fake_change)
         spec = TaskSpec(
             description=description,
@@ -115,6 +135,12 @@ def run(
             model=model,
             context_paths=context or [],
             budgets=budget,
+            classification_overrides=ClassificationOverrides(
+                task_type=task_type,
+                complexity=complexity,
+                risk=risk,
+            ),
+            human_approved=approve_high_risk,
         )
         task = Task(project=root, spec=spec, config=config)
         store = Store(root)
@@ -153,19 +179,37 @@ def status(
             store.close()
 
 
-def continue_task(task_id: str, project: Path, verify_only: bool, extend_seconds: float) -> None:
+def continue_task(
+    task_id: str,
+    project: Path,
+    verify_only: bool,
+    extend_seconds: float,
+    extend_model_calls: int = 0,
+    approve_high_risk: bool = False,
+) -> None:
     store = None
     try:
         root = repository_root(project)
         store = Store(root)
-        if extend_seconds:
+        if extend_seconds or extend_model_calls or approve_high_risk:
             with task_lock(root, task_id):
                 task = store.load(task_id)
                 if task.state in TERMINAL:
                     raise ValueError("Cannot extend a terminal task")
                 task.spec.budgets.wall_seconds += extend_seconds
+                task.spec.budgets.model_calls += extend_model_calls
+                if approve_high_risk:
+                    task.spec.human_approved = True
+                    store.event(task, "human_approved", {"source": "explicit_cli"})
                 store.checkpoint(task)
-                store.event(task, "budget_extended", {"seconds": extend_seconds})
+                store.event(
+                    task,
+                    "budget_extended",
+                    {
+                        "seconds": extend_seconds,
+                        "model_calls": extend_model_calls,
+                    },
+                )
         task = store.load(task_id)
         selected = provider_for(task.spec.provider)
         exit_for(
@@ -190,9 +234,17 @@ def resume(
     extend_seconds: Annotated[
         float, typer.Option(min=0, help="Explicitly add active wall time")
     ] = 0,
+    extend_model_calls: Annotated[
+        int, typer.Option(min=0, max=99, help="Explicitly add model calls")
+    ] = 0,
+    approve_high_risk: Annotated[
+        bool, typer.Option(help="Explicitly approve the saved high-risk task")
+    ] = False,
 ) -> None:
     """Continue a safe checkpoint; uncertain provider work requires --verify-only."""
-    continue_task(task_id, project, verify_only, extend_seconds)
+    continue_task(
+        task_id, project, verify_only, extend_seconds, extend_model_calls, approve_high_risk
+    )
 
 
 @app.command()
