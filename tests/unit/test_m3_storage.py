@@ -34,7 +34,7 @@ def test_v1_invocation_migration_preserves_row_and_permits_multiple_calls(repo: 
     connection.commit()
     connection.close()
     store = Store(repo)
-    assert store.connection.execute("PRAGMA user_version").fetchone()[0] == 2
+    assert store.connection.execute("PRAGMA user_version").fetchone()[0] == len(MIGRATIONS)
     migrated = store.connection.execute("SELECT * FROM invocations").fetchone()
     assert migrated["invocation_id"] == task.execution_id
     assert migrated["role"] == "engineer" and migrated["status"] == "success"

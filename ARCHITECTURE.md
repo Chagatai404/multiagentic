@@ -1,4 +1,4 @@
-# Architecture (M0 through M3)
+# Architecture (M0 through M4)
 
 Dependency direction: CLI → engine shell → subsystem contracts and adapters. The
 functional core is `core/models.py`, `core/policy.py` and `core/workflow.py`: Pydantic
@@ -9,6 +9,7 @@ Models/policy import no provider, subprocess, filesystem execution, or storage c
 | Layer | Implementation | Boundary |
 |---|---|---|
 | Interface | `cli.py` | Normalize requests, output JSON, meaningful exit codes |
+| Triggers | `core/triggers.py`, `integrations/` | Pure routing/idempotency; client hook I/O, installers, detached runner |
 | Orchestration | `core/engine.py` | Sequential workflow and checkpoint recovery |
 | Agents/providers | `agents/`, `providers/`, Role enum | Capabilities, request/result, provider-specific transport |
 | Project/context | `projects/`, `context/` | YAML snapshot, tracked selective context, character budget |
@@ -76,6 +77,33 @@ instead of deleted. Interrupted verification can be retried only in a trusted pr
 with rerunnable checks; arbitrary user-defined checks may have side effects, so review
 their semantics. Workspaces and artifacts are retained for manual inspection and
 integration.
+
+## Triggers and client hooks
+
+Every trigger is a normalized `TriggerEnvelope` (origin, session, client turn id,
+cwd, prompt, receive time). `core/triggers.py` is pure. In `route_trigger`, an
+`ENG_ACTIVE` environment is reentrant and never routes; otherwise an `eng:` prefix
+routes in every mode. Slash commands, manual-mode prose, M3 questions and
+ambiguous prompts bypass. Adaptive and full modes also route high-confidence
+imperative change requests; full raises the risk floor to medium so review runs.
+Idempotency keys use the client's prompt/turn id; without one a prompt digest
+deduplicates for 120 seconds only. SQLite migration 3 stores trigger records with
+digests and redacted envelopes; `claim_trigger` is atomic under `BEGIN IMMEDIATE`.
+
+`integrations/hook.py` is the only client-facing entry point. Both clients block a
+prompt on exit code 2, so it parses arguments leniently, fails open (exit 0 with a
+`systemMessage`) on every error, and prints one JSON object or nothing. Order per
+routed prompt: installed-project binding, ignored runtime state, clean checkout and
+provider checks, claim, create a CREATED task, spawn a detached `eng start`, mark
+started, then block the prompt with a reason naming the task. Only a started claim
+blocks a redelivery; failed or interrupted claims let the prompt through. Installers
+add their per-user files to `.git/info/exclude` so they never dirty the checkout. The runner holds none of the hook's pipes (stdin null, output appended to
+`runner.log`); Windows uses `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP` and tries
+`CREATE_BREAKAWAY_FROM_JOB`, POSIX a new session. Installers write only
+`<project>/.claude/settings.local.json` (exec-form `args`, no shell) or
+`<project>/.codex/hooks.json` (`command` plus `commandWindows`), preserve other
+entries, write atomically and keep one backup. Codex runs the hook only after the
+user trusts it with `/hooks`; eng never bypasses hook trust.
 
 ## Security policy
 

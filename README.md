@@ -132,6 +132,34 @@ reviewer use bounded role-specific context and retained standalone Git snapshots
 Mutation checks detect unexpected changes to the snapshot or task workspace; these are
 not OS sandboxes. The verifier is deterministic and makes no model call.
 
+## Prompt hooks (opt-in)
+
+Claude Code and Codex can route engineering prompts to eng through their
+`UserPromptSubmit` hooks. Installation is explicit and project-local:
+
+```powershell
+eng hooks install claude-code -p .            # writes .claude/settings.local.json
+eng hooks install codex -p . --mode adaptive  # writes .codex/hooks.json; trust it via /hooks
+eng hooks status claude-code -p .
+eng hooks uninstall claude-code -p .
+```
+
+- `manual` (default): only prompts starting with `eng:` route, for example
+  `eng: fix the failing parser test`.
+- `adaptive`: also routes clearly imperative change requests ("Fix the failing
+  parser test"). Questions, slash commands and ambiguous prose always pass through.
+- `full`: adaptive routing plus independent review of routed work.
+
+A routed prompt is blocked in the client, with a message naming the task, so only
+eng performs the work. The task runs in a detached `eng start TASK_ID` process; use
+`eng status TASK_ID` to follow it. Redelivered prompts reuse the existing task.
+Hooks fired inside eng's own provider processes never route. Routing requires a
+clean checkout, and any hook failure lets the prompt through with a warning.
+`eng trigger "eng: ..." -p .` submits the same normalized trigger from a shell, and
+`eng triggers` lists records (prompt digests, never raw prompts). Hook behavior is
+tested with emulated client input; firing inside live Claude Code or Codex sessions
+has not been validated.
+
 ## State, evidence, and recovery
 
 SQLite is authoritative under `.engineering/state/eng.sqlite3`. Versioned migrations

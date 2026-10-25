@@ -13,8 +13,10 @@
   review, explicit high-risk task approval, targeted repairs and repeat-failure stops.
   Per-role invocation persistence retains conservative recovery. No live validation
   claimed; `eng plan`/`eng debug` deferred.
-- **M4 - next:** supported opt-in hooks, normalized trigger envelopes, idempotency keys,
-  deduplication and tested reentrancy guards. No automatic interception claims.
+- **M4 - verified offline:** opt-in project-local `UserPromptSubmit` hooks for Claude Code
+  and Codex, normalized trigger envelopes, idempotency keys, deduplication, reentrancy
+  guards, read-only bypass and detached runners, tested with emulated client input.
+  Live hook firing inside real clients is not validated; Git/CI triggers move to M6.
 - **M5:** complete stream-to-disk artifacts, provider usage aggregation, pricing estimates
   separated from measured spend, finer budgets, cache invalidation and reproducible A/B/C
   benchmarks for verified success, latency, cost, retries and human intervention.

@@ -145,4 +145,44 @@ changed to bypass this limitation.
 preserve individual role usage; they are authoritative, not an invented task total.
 CLI cost values remain client estimates rather than measured account spend, and
 missing usage stays unknown. Parallel development does not validate parallel runtime
-scheduling; hooks remain M4 work and scheduling/integration remain M6 work.
+scheduling; scheduling/integration remain M6 work.
+
+## M4 - verified offline
+
+Client hook contracts were checked against the official Claude Code and Codex hook
+documentation (2026-10-26) for installed claude 2.1.301 and codex 0.149.0. Verification
+on Windows 11, Python 3.14, local only:
+
+- Full offline suite: 341 passed, 1 skipped (opt-in paid live Codex smoke test), with a
+  long pytest base directory. Ruff, strict mypy for Windows and Linux, `uv lock
+  --check`, build, wheel-to-source comparison and fresh-wheel smoke pass; the installed
+  wheel's hook module fails open (exit 0, systemMessage) on malformed input.
+- End-to-end tests run the hook as a real subprocess with emulated Claude Code and
+  Codex stdin, including the exact argv an installer writes. They cover routing with a
+  detached runner that executes the fake-provider task after the hook exits,
+  redelivery idempotency, question/slash/manual/ambiguous bypass with no state written,
+  ENG_ACTIVE reentrancy, never exiting 2 on malformed input, unknown provider, non-
+  repository, dirty-checkout, unignored-state and other-project cases, and that
+  installation keeps `git status` clean.
+- The runner test proves the hook returns while its child keeps running and that
+  child output appends to the log; on this host `CREATE_BREAKAWAY_FROM_JOB` succeeded.
+- An independent read-only review found no exit-2 path. Verified findings were fixed:
+  import/interrupt failures not failing open, validation messages echoing prompt text,
+  a crash window that could block redeliveries without a runner, bookkeeping errors
+  after spawn letting a prompt through while a runner worked, no binding between hook
+  and installed project, installer files dirtying the checkout, uninitialized state
+  dirtying it, heuristic prompts warning in every dirty tree, and settings file mode
+  loss on POSIX.
+
+Development incident: before tests set `GIT_CEILING_DIRECTORIES`, a "non-repository"
+test directory under `.cache` resolved to this checkout and routed one task here. The
+engine refused it (dirty repository; FAILED, 0 provider calls, no worktree); its
+records remain in this checkout's ignored `.engineering/state`.
+
+Not validated: hook firing inside live Claude Code or Codex sessions; whether those
+clients pass ENG_ACTIVE to hooks spawned inside eng-launched providers; Windows job
+breakaway inside the clients' hook processes (if refused, the runner may end with the
+hook); Codex `commandWindows` quoting when the interpreter path contains spaces; POSIX
+detachment (CI only). Routed task descriptions are stored in task payloads like any
+`eng run` description; trigger digests are unsalted. A turn-keyed claim interrupted
+before its runner started is never retried automatically; the prompt passes through.

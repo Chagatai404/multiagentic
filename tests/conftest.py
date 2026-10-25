@@ -27,6 +27,13 @@ def commit(root: Path) -> None:
     )
 
 
+@pytest.fixture(autouse=True)
+def git_ceiling(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Temporary directories may live inside this checkout (TEMP=.cache); repository
+    # discovery must never climb out of a test's sandbox into the real repository.
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
+
+
 @pytest.fixture
 def repo(tmp_path: Path) -> Path:
     root = tmp_path / "repository"

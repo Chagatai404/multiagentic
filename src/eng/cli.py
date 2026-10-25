@@ -17,16 +17,25 @@ from eng.core.models import (
     Task,
     TaskSpec,
     TaskType,
+    now,
 )
 from eng.core.policy import TERMINAL
+from eng.core.triggers import TriggerEnvelope, TriggerMode, TriggerOrigin
 from eng.execution.process import redact, redact_data
 from eng.execution.workspace import repository_root, task_lock
+from eng.integrations.hook import DEFAULT_PROVIDERS, submit
+from eng.integrations.install import hook_status, install_hook, uninstall_hook
 from eng.projects.config import initialize, load_config
 from eng.providers.base import Provider
 from eng.providers.registry import build_registry
 from eng.storage.store import Store
 
 app = typer.Typer(no_args_is_help=True, help="Execute engineering tasks in isolated Git worktrees.")
+hooks_app = typer.Typer(
+    no_args_is_help=True,
+    help="Install opt-in prompt hooks for Claude Code or Codex in this project only.",
+)
+app.add_typer(hooks_app, name="hooks")
 Project = Annotated[
     Path, typer.Option("--project", "-p", help="Path inside the target Git repository.")
 ]
@@ -283,6 +292,113 @@ def cancel(task_id: str, project: Project = Path(".")) -> None:
     finally:
         if store is not None:
             store.close()
+
+
+@app.command()
+def start(task_id: str, project: Project = Path(".")) -> None:
+    """Execute a CREATED task, e.g. one queued by a client hook's detached runner."""
+    store = None
+    try:
+        if os.environ.get("ENG_ACTIVE"):
+            raise ValueError("Nested eng execution is disabled")
+        store = Store(repository_root(project))
+        task = store.load(task_id)
+        if task.state != State.CREATED:
+            raise ValueError("Task already started; use resume or status")
+        selected = provider_for(task.spec.provider)
+        exit_for(asyncio.run(Engine(store, selected).execute(task_id)))
+    except (ValueError, OSError) as error:
+        fail(error)
+    finally:
+        if store is not None:
+            store.close()
+
+
+@app.command()
+def trigger(
+    prompt: str,
+    project: Project = Path("."),
+    mode: Annotated[TriggerMode, typer.Option(help="Routing mode")] = TriggerMode.MANUAL,
+    provider: Annotated[
+        str | None, typer.Option(help="Provider for routed work; defaults to project config")
+    ] = None,
+    session: Annotated[str | None, typer.Option(help="Caller session identity")] = None,
+    turn: Annotated[str | None, typer.Option(help="Caller turn id for idempotency")] = None,
+) -> None:
+    """Submit a normalized trigger; routed work runs in a detached `eng start` process."""
+    try:
+        envelope = TriggerEnvelope(
+            origin=TriggerOrigin.CLI,
+            session_id=session,
+            turn_id=turn,
+            cwd=str(project.resolve()),
+            prompt=prompt,
+            received_at=now(),
+        )
+        decision, _ = submit(envelope, mode, provider)
+        emit(decision.model_dump(mode="json"))
+    except (ValueError, OSError, ValidationError) as error:
+        fail(error)
+
+
+@app.command()
+def triggers(project: Project = Path("."), limit: int = 50) -> None:
+    """List recent trigger records (digests and status, never raw prompts)."""
+    store = None
+    try:
+        store = Store(repository_root(project))
+        emit([record.model_dump(mode="json") for record in store.triggers(limit)])
+    except (ValueError, OSError) as error:
+        fail(error)
+    finally:
+        if store is not None:
+            store.close()
+
+
+Client = Annotated[TriggerOrigin, typer.Argument(help="claude-code or codex")]
+
+
+def hook_client(client: TriggerOrigin) -> str:
+    if client == TriggerOrigin.CLI:
+        raise ValueError("Hooks are installed for claude-code or codex")
+    return client.value
+
+
+@hooks_app.command("install")
+def hooks_install(
+    client: Client,
+    project: Project = Path("."),
+    mode: Annotated[TriggerMode, typer.Option(help="Routing mode")] = TriggerMode.MANUAL,
+    provider: Annotated[
+        str | None, typer.Option(help="Provider for routed work; defaults to the client's")
+    ] = None,
+) -> None:
+    """Add or update this project's local eng prompt hook; other hooks are preserved."""
+    try:
+        name = hook_client(client)
+        selected = provider or DEFAULT_PROVIDERS[client] or "codex"
+        build_registry().create(selected)
+        emit(install_hook(name, repository_root(project), mode=mode.value, provider=selected))
+    except (ValueError, OSError) as error:
+        fail(error)
+
+
+@hooks_app.command("uninstall")
+def hooks_uninstall(client: Client, project: Project = Path(".")) -> None:
+    """Remove only eng's prompt hook entries from this project's client settings."""
+    try:
+        emit(uninstall_hook(hook_client(client), repository_root(project)))
+    except (ValueError, OSError) as error:
+        fail(error)
+
+
+@hooks_app.command("status")
+def hooks_status(client: Client, project: Project = Path(".")) -> None:
+    """Show whether this project's client settings contain the eng prompt hook."""
+    try:
+        emit(hook_status(hook_client(client), repository_root(project)))
+    except (ValueError, OSError) as error:
+        fail(error)
 
 
 @app.command()

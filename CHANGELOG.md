@@ -1,5 +1,24 @@
 # Changelog
 
+## M4 - verified offline
+
+- Add normalized TriggerEnvelope contracts with pure, high-precision routing: `eng:`
+  requests route in every mode; adaptive/full modes add imperative change requests;
+  questions, slash commands, ambiguous prose and reentrant (ENG_ACTIVE) prompts bypass.
+- Add SQLite migration 3 with atomic trigger claims, id-based idempotency and a
+  120-second content-digest window; records keep digests and redacted envelopes.
+- Add the fail-open `python -m eng.integrations.hook` entry point for Claude Code and
+  Codex `UserPromptSubmit`; it never exits 2 and blocks a prompt only once a detached
+  `eng start` runner is working on it.
+- Add `eng hooks install|uninstall|status`, `eng trigger`, `eng triggers` and
+  `eng start`. Installers write only project-local client files, preserve other hooks,
+  bind the hook to the installed project and keep the checkout clean via
+  `.git/info/exclude`.
+- Tests isolate Git discovery with `GIT_CEILING_DIRECTORIES` so temporary
+  directories inside a checkout can never resolve to the enclosing repository.
+- Verified offline: 341 passed, 1 opt-in live test skipped; see docs/VALIDATION.md.
+  No live client hook firing is claimed.
+
 ## M3 - verified offline
 
 - Add deterministic independent task-type, complexity and risk classification;

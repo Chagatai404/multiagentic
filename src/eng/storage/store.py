@@ -1,10 +1,12 @@
 import json
 import sqlite3
+from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from eng.core.models import Role, State, Task, identity, now
 from eng.core.policy import TERMINAL, validate_transition
+from eng.core.triggers import CONTENT_DEDUP_SECONDS, TriggerOrigin, TriggerRecord
 from eng.execution.process import redact, redact_data
 
 MIGRATIONS = [
@@ -43,7 +45,29 @@ MIGRATIONS = [
     DROP TABLE invocations_v1;
     CREATE INDEX invocations_execution ON invocations(execution_id);
     """,
+    """
+    CREATE TABLE triggers (key TEXT PRIMARY KEY, origin TEXT NOT NULL, session_id TEXT,
+                           prompt_digest TEXT NOT NULL, content_keyed INTEGER NOT NULL,
+                           task_id TEXT, status TEXT NOT NULL, message TEXT NOT NULL,
+                           created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                           payload TEXT NOT NULL);
+    """,
 ]
+
+
+def _trigger_record(row: sqlite3.Row) -> TriggerRecord:
+    return TriggerRecord(
+        key=row["key"],
+        origin=TriggerOrigin(row["origin"]),
+        session_id=row["session_id"],
+        prompt_digest=row["prompt_digest"],
+        content_keyed=bool(row["content_keyed"]),
+        task_id=row["task_id"],
+        status=row["status"],
+        message=row["message"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
 
 
 class Store:
@@ -264,6 +288,75 @@ class Store:
                 "INSERT INTO artifacts(task_id,execution_id,path,kind) VALUES (?,?,?,?)",
                 (task.id, task.execution_id, str(path), kind),
             )
+
+    def claim_trigger(
+        self, record: TriggerRecord, payload: dict[str, Any], *, now: str
+    ) -> TriggerRecord | None:
+        """Claim a trigger key atomically; return the existing duplicate, or None when claimed."""
+        connection = self.connection
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            row = connection.execute("SELECT * FROM triggers WHERE key=?", (record.key,)).fetchone()
+            if row is not None:
+                existing = _trigger_record(row)
+                age = datetime.fromisoformat(now) - datetime.fromisoformat(existing.created_at)
+                stale = existing.content_keyed and age > timedelta(seconds=CONTENT_DEDUP_SECONDS)
+                if not stale:
+                    connection.execute("COMMIT")
+                    return existing
+                connection.execute("DELETE FROM triggers WHERE key=?", (record.key,))
+            connection.execute(
+                "INSERT INTO triggers(key,origin,session_id,prompt_digest,content_keyed,task_id,"
+                "status,message,created_at,updated_at,payload) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    record.key,
+                    record.origin.value,
+                    record.session_id,
+                    record.prompt_digest,
+                    int(record.content_keyed),
+                    record.task_id,
+                    record.status,
+                    redact(record.message),
+                    record.created_at,
+                    record.updated_at,
+                    json.dumps(redact_data(payload)),
+                ),
+            )
+            connection.execute("COMMIT")
+        except BaseException:
+            connection.execute("ROLLBACK")
+            raise
+        return None
+
+    def update_trigger(
+        self,
+        key: str,
+        *,
+        status: Literal["claimed", "started", "failed"],
+        task_id: str | None = None,
+        message: str = "",
+        now: str,
+    ) -> None:
+        with self.connection:
+            cursor = self.connection.execute(
+                "UPDATE triggers SET status=?, task_id=COALESCE(?, task_id), message=?, "
+                "updated_at=? WHERE key=?",
+                (status, task_id, redact(message), now, key),
+            )
+        if cursor.rowcount != 1:
+            raise ValueError(f"Trigger not found: {key}")
+
+    def trigger(self, key: str) -> TriggerRecord | None:
+        row = self.connection.execute("SELECT * FROM triggers WHERE key=?", (key,)).fetchone()
+        return None if row is None else _trigger_record(row)
+
+    def triggers(self, limit: int = 50) -> list[TriggerRecord]:
+        return [
+            _trigger_record(row)
+            for row in self.connection.execute(
+                "SELECT * FROM triggers ORDER BY rowid DESC LIMIT ?", (limit,)
+            )
+        ]
 
     def export_events(self, task: Task, directory: Path) -> None:
         directory.mkdir(parents=True, exist_ok=True)

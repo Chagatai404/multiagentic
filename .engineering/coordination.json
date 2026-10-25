@@ -1,22 +1,27 @@
 {
-  "milestone": "M3",
-  "branch": "agent/codex/m3-adaptive",
-  "base_commit": "0534c9ad997d6203095ba3a2478c34f46b9ac394",
+  "milestone": "M4",
+  "branch": "agent/claude/m4-triggers",
+  "base_commit": "e95352e",
   "active_agent": "claude",
-  "phase": "m3_verified_committed_locally",
-  "note": "Codex hit its usage limit mid-M3; Claude Code continues in this checkout. Do not edit concurrently here; use a separate agent/codex/<task> worktree.",
+  "phase": "m4_verified_committed_locally",
+  "note": "Claude Code lead with three slice subagents in this checkout; exclusive file ownership per docs/M4_PLAN.md. Codex: do not edit here; use a separate agent/codex/<task> worktree.",
   "owners": {
-    "all_files": "claude (single writer); review agents are read-only"
+    "A_routing_storage": "core/triggers.py functions, storage/store.py, tests/unit/test_triggers.py, tests/unit/test_trigger_storage.py",
+    "B_clients_install": "integrations/__init__.py, integrations/clients.py, integrations/install.py, tests/unit/test_clients.py, tests/unit/test_install.py",
+    "C_runner": "integrations/runner.py, tests/unit/test_runner.py",
+    "D_lead": "integrations/hook.py, cli.py, tests/integration/test_triggers_e2e.py, docs"
   },
   "reasoning": {
-    "invariant_review": "medium",
-    "boundary_audit": "low",
-    "fixes_and_verification": "lead agent"
+    "A_routing_storage": "medium",
+    "B_clients_install": "medium",
+    "C_runner": "high - Windows process detachment semantics",
+    "D_lead": "lead agent"
   },
   "rules": [
     "No overlapping edits",
     "No paid model calls",
-    "No commits before verification",
+    "Never install hooks outside tmp_path test directories",
+    "No commits by slice agents",
     "No automatic push"
   ]
 }
