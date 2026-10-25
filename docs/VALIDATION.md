@@ -112,9 +112,25 @@ persistence. Verification on Windows 11, Python 3.14, local only (2026-10-25):
 - A boundary audit found no shell interpolation, no provider flags in core/agents,
   bounded context packets and no M4/M6 or live-editing claims.
 
-The branch is not pushed; M3 CI execution is not established. Git cannot operate in
-directories beyond Windows MAX_PATH even with `core.longpaths`; very deep project
-paths remain a host limitation. Each planner/reviewer call copies tracked and
+The branch is not pushed; M3 CI execution is not established.
+
+Known limitations recorded rather than fixed:
+
+- Deep Windows paths: the shallow snapshot root is the mitigation. `core.longpaths`
+  alone did not prevent Git object-write failures near 280 characters, and Git cannot
+  enter directories beyond MAX_PATH. Snapshot copies use Python file APIs that pass
+  260 characters here only because `LongPathsEnabled=1` (Windows defaults it off).
+  Deep project roots or deeply nested trees can still fail, closed, as `role_setup`.
+- Budget exhaustion is deliberately split: failed checks stay BLOCKED (M1 behavior;
+  resume re-runs checks without a model call), review rejections PAUSE with a durable
+  pending repair.
+- A planner required only after implementation-time escalation is followed by a
+  second engineer call; whether that call is always useful is unassessed.
+- Workspace digests exclude gitignored files, so review binding does not cover
+  ignored inputs that checks may read.
+- A digest failure after a role's checkpoint advances is reported FAILED, while the
+  durable record may still show `provider_started`.
+- Snapshots share one root and are named by role and a random suffix, not task id. Each planner/reviewer call copies tracked and
 nonignored content and runs `git add --all`; that time and disk cost is unmeasured
 (M5). `eng plan` and `eng debug` remain deferred; `run`/`resume` expose the workflow.
 

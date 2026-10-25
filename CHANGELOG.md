@@ -12,7 +12,8 @@
   preserve unknown-outcome recovery and checks-only continuation without review bypass.
 - Expose classification, approval, repair and model-call budget CLI options, including
   explicit resume extensions. Default model-call budget remains one.
-- Fix deep Windows paths for Git (`core.longpaths`, shallow snapshot root), separate
+- Mitigate deep Windows paths with a shallow snapshot root (plus Git `core.longpaths`,
+  which alone was insufficient; very deep trees still fail closed), separate
   `role_setup` from `role_mutation`, keep mutation evidence when a provider raises,
   report Git timeouts as Git failures, and keep a review-requested repair pending at
   budget exhaustion so an explicit extension runs the debugger.
