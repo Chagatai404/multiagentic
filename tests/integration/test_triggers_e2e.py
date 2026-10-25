@@ -30,6 +30,9 @@ def hook(
 ) -> tuple[int, str, float]:
     environment = {k: v for k, v in os.environ.items() if k != "ENG_ACTIVE"}
     environment.update(env or {})
+    if "--provider" not in arguments:
+        # Never let a discovery regression reach a real (billable) provider.
+        arguments = (*arguments, "--provider", "fake")
     raw = payload if isinstance(payload, str) else json.dumps(payload)
     started = time.monotonic()
     result = subprocess.run(

@@ -174,10 +174,19 @@ on Windows 11, Python 3.14, local only:
   dirtying it, heuristic prompts warning in every dirty tree, and settings file mode
   loss on POSIX.
 
-Development incident: before tests set `GIT_CEILING_DIRECTORIES`, a "non-repository"
-test directory under `.cache` resolved to this checkout and routed one task here. The
-engine refused it (dirty repository; FAILED, 0 provider calls, no worktree); its
-records remain in this checkout's ignored `.engineering/state`.
+Development incidents, both caused by pytest temporary directories living under this
+checkout's `.cache` (TEMP=.cache) and Git discovery climbing out of them:
+
+- A "non-repository" e2e directory resolved to this checkout and routed one task here
+  with the default claude provider. The engine refused it (dirty repository; FAILED,
+  0 provider calls, no worktree); its records remain in the ignored `.engineering/state`.
+- Installer unit tests appended eight lines to this checkout's `.git/info/exclude`;
+  they were removed and the file restored byte-for-byte to its original content.
+
+Fix: the autouse fixture sets `GIT_CEILING_DIRECTORIES` to each test's temporary
+directory parent (Git does not protect the ceiling directory itself), and e2e hook
+runs default to the fake provider. Re-running the installer and e2e tests left the
+exclude file hash, task list and `.claude`/`.codex` paths of this checkout unchanged.
 
 Not validated: hook firing inside live Claude Code or Codex sessions; whether those
 clients pass ENG_ACTIVE to hooks spawned inside eng-launched providers; Windows job

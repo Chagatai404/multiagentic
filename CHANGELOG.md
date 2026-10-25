@@ -14,8 +14,9 @@
   `eng start`. Installers write only project-local client files, preserve other hooks,
   bind the hook to the installed project and keep the checkout clean via
   `.git/info/exclude`.
-- Tests isolate Git discovery with `GIT_CEILING_DIRECTORIES` so temporary
-  directories inside a checkout can never resolve to the enclosing repository.
+- Tests set `GIT_CEILING_DIRECTORIES` to the parent of each test's temporary
+  directory, so Git discovery from inside it cannot reach an enclosing checkout, and
+  e2e hook runs default to the fake provider.
 - Verified offline: 341 passed, 1 opt-in live test skipped; see docs/VALIDATION.md.
   No live client hook firing is claimed.
 

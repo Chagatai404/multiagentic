@@ -156,7 +156,10 @@ eng performs the work. The task runs in a detached `eng start TASK_ID` process; 
 Hooks fired inside eng's own provider processes never route. Routing requires a
 clean checkout, and any hook failure lets the prompt through with a warning.
 `eng trigger "eng: ..." -p .` submits the same normalized trigger from a shell, and
-`eng triggers` lists records (prompt digests, never raw prompts). Hook behavior is
+`eng triggers` lists records (prompt digests, never raw prompts). Routed tasks use the
+project's `budgets.model_calls` (default 1): a complex request that needs a planner, or
+any review, pauses after that call. Raise the budget in `.engineering/project.yaml` or
+continue with `eng resume TASK_ID --extend-model-calls N`. Hook behavior is
 tested with emulated client input; firing inside live Claude Code or Codex sessions
 has not been validated.
 
