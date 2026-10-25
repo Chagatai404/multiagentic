@@ -11,12 +11,11 @@ from pydantic import ValidationError
 from eng.core.engine import Engine
 from eng.core.models import State, Task, TaskSpec
 from eng.core.policy import TERMINAL
-from eng.execution.process import redact, redact_data, run_process
+from eng.execution.process import redact, redact_data
 from eng.execution.workspace import repository_root, task_lock
 from eng.projects.config import initialize, load_config
 from eng.providers.base import Provider
-from eng.providers.codex import CodexProvider, codex_command
-from eng.providers.fake import FakeProvider
+from eng.providers.registry import build_registry
 from eng.storage.store import Store
 
 app = typer.Typer(no_args_is_help=True, help="Execute engineering tasks in isolated Git worktrees.")
@@ -37,19 +36,15 @@ def fail(error: Exception) -> NoReturn:
 
 
 def provider_for(name: str, edits: list[str] | None = None) -> Provider:
-    if name == "codex":
-        if edits:
-            raise ValueError("--fake-change is only available with --provider fake")
-        return CodexProvider()
-    if name == "fake":
-        changes = {}
-        for edit in edits or []:
-            path, separator, content = edit.partition("=")
-            if not separator or not path:
-                raise ValueError("Use --fake-change relative/path=content")
-            changes[path] = content
-        return FakeProvider(changes)
-    raise ValueError(f"Unknown provider: {name}; choose codex or fake")
+    if edits and name != "fake":
+        raise ValueError("--fake-change is only available with --provider fake")
+    changes = {}
+    for edit in edits or []:
+        path, separator, content = edit.partition("=")
+        if not separator or not path:
+            raise ValueError("Use --fake-change relative/path=content")
+        changes[path] = content
+    return build_registry(fake_changes=changes).create(name)
 
 
 def exit_for(task: Task) -> None:
@@ -81,7 +76,7 @@ def run(
     ],
     project: Project = Path("."),
     provider: Annotated[
-        str | None, typer.Option(help="codex or fake; defaults to project config")
+        str | None, typer.Option(help="claude, codex or fake; defaults to project config")
     ] = None,
     model: Annotated[
         str | None, typer.Option(help="Explicit provider model, otherwise provider default")
@@ -243,28 +238,15 @@ def providers() -> None:
     """Show implemented adapters and their declared capabilities."""
     emit(
         {
-            provider.name: provider.capabilities.model_dump(mode="json")
-            for provider in (FakeProvider(), CodexProvider())
+            name: capabilities.model_dump(mode="json")
+            for name, capabilities in build_registry().capabilities().items()
         }
     )
 
 
 @app.command()
 def doctor() -> None:
-    """Check executable availability and version without invoking a model."""
-
-    async def inspect() -> dict[str, object]:
-        result: dict[str, object] = {"git": shutil.which("git"), "fake": "available"}
-        try:
-            command = codex_command()
-            version = await run_process([*command, "--version"], Path.cwd(), 15)
-            result["codex"] = {
-                "available": version.exit_code == 0,
-                "version": version.stdout.strip(),
-                "error": redact(version.stderr[-1000:]),
-            }
-        except ValueError as error:
-            result["codex"] = {"available": False, "error": str(error)}
-        return result
-
-    emit(asyncio.run(inspect()))
+    """Check executable versions; authentication and model access are not checked."""
+    result: dict[str, object] = {"git": shutil.which("git")}
+    result.update(asyncio.run(build_registry().doctor(Path.cwd())))
+    emit(result)

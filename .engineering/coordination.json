@@ -1,0 +1,18 @@
+{
+  "milestone": "M2",
+  "branch": "agent/codex/m2-portability",
+  "base_commit": "d98360c90dd40bcb805515410094ea851606a51f",
+  "coordinator": "Codex root",
+  "phase": "complete",
+  "owner_status": "All implementation, verification, review and audit ownership released",
+  "publication": "Local commit only; not pushed, published or merged; no pull request created",
+  "shared_contracts": "Provider protocol unchanged; Usage optional cache-creation and cost-source fields agreed and implemented",
+  "owners": {
+    "claude_implement": ["src/eng/providers/claude.py", "src/eng/execution/process.py", "src/eng/core/models.py", "tests/contract/test_claude.py"],
+    "registry_implement": ["src/eng/providers/registry.py", "src/eng/cli.py", "tests/unit/test_registry.py", "tests/integration/test_registry_cli.py"],
+    "portability_implement": ["src/eng/projects/config.py", "src/eng/execution/commands.py", "src/eng/verification/runner.py", "tests/integration/test_portability.py", ".github/workflows/tests.yml"]
+  },
+  "reasoning": {"claude_implement": "medium", "registry_implement": "low", "portability_implement": "medium", "routine_checks_and_docs": "low", "independent_review": "medium"},
+  "verification": {"offline_passed": 143, "live_skipped": 1, "ruff": "passed", "mypy_windows_linux": "passed", "package_build_and_fresh_wheel": "passed", "independent_review": "no actionable findings", "anti_pattern_audit": "no findings"},
+  "rules": ["No overlapping edits", "No model calls without coordinator authorization", "No commits until verification", "No automatic push"]
+}

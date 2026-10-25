@@ -1,11 +1,12 @@
 # multiagentic
 
-A provider-independent engineering orchestrator. Version 0.1 implements M0 and M1:
-one coding provider, isolated Git worktrees, deterministic verification, durable SQLite
-state, cancellation, and conservative recovery.
+A provider-independent engineering orchestrator with Codex, Claude Code and deterministic
+fake adapters, isolated Git worktrees, deterministic verification, durable SQLite state,
+cancellation, and conservative recovery. The runtime workflow remains sequential.
 
 Requires Python 3.12+, Git, and a trusted local repository with an initial commit.
-Codex CLI is optional for the offline demo. The tested CLI baseline is Codex 0.149.0.
+Provider CLIs are optional for the offline demo. Adapter command baselines are Codex
+0.149.0 and Claude Code 2.1.301. JavaScript checks require Node.js and npm.
 
 ```sh
 python -m venv .venv
@@ -27,6 +28,9 @@ eng init --project /path/to/repository
 ```
 
 Review `.engineering/project.yaml`. Detection proposes commands with `confirmed: false`.
+Python detection proposes pytest only for explicit pytest configuration; JavaScript
+detection proposes `npm test` only for a nonempty `scripts.test` in package.json. Every
+discovered check requires review and confirmation. No dependencies are installed.
 Use argument arrays, never shell command strings. `{python}` resolves to the interpreter
 running eng, which is useful when a worktree shares an external virtual environment.
 
@@ -47,7 +51,10 @@ must already be available to the check command; no installation occurs automatic
 Both the provider and verification commands execute trusted code on your machine.
 
 ```sh
+eng providers
+eng doctor
 eng run 'Fix the addition function' --accept 'Addition returns the sum' --provider codex
+eng run 'Fix the addition function' --accept 'Addition returns the sum' --provider claude
 eng status TASK_ID
 eng cancel TASK_ID
 eng resume TASK_ID
@@ -59,6 +66,9 @@ Specify `--model` to override the provider default; no model name or pricing is
 hardcoded. `--wall-seconds`, `--provider-seconds`, and `--context` bound execution and
 select extra tracked files. `--user-config` adds an explicit user defaults YAML.
 Precedence is engine defaults, user defaults, project settings, then task options.
+`--provider` overrides the configured provider; resume retains the saved task provider.
+`eng providers` lists capabilities without invoking models. `eng doctor` checks CLI
+versions only and reports authentication as `not_checked`; it does not prove model access.
 Mandatory protected paths remain enforced across all levels.
 
 The command prints task JSON, including its ID, workspace, checks, usage, and state.
@@ -107,22 +117,34 @@ Git worktrees isolate changes; they are **not security sandboxes**. Use only tru
 repositories and approved check commands, or provide an external OS/container sandbox.
 Codex is launched in workspace-write mode with tool network access disabled and
 approval requests denied. The provider still needs its normal service connection and
-saved authentication. Provider controls are a boundary supplied by the installed CLI,
+saved authentication. Claude uses safe/restricted print/JSON mode with only
+Read, Edit, Write, Glob and Grep tools, no Bash, strict empty MCP configuration and
+no permission bypass. Verification commands run separately under eng. Provider controls
+are a boundary supplied by the installed CLI,
 not an OS security guarantee from eng. Secrets are filtered from check environments,
 and known environment secrets and common credential patterns are redacted in logs;
 this is not a general secret scanner. Check programs can still read files allowed by
 the operating system. Protected-path violations are detected after execution, not
-prevented for arbitrary processes. No financial cap is promised for Codex: this CLI
-does not expose a hard dollar limit; bound calls and time and use account limits.
+prevented for arbitrary processes. No financial cap is promised: bound calls and time
+and use account limits. On Windows, supported npm launchers resolve to Node plus
+`npm-cli.js`; unknown layouts are unavailable. npm itself executes project scripts
+through its shell, so review the test script and its lifecycle hooks before confirmation.
 
-Each captured stdout/stderr stream is capped at 2 MB in M1; pipes continue draining.
+Usage counters retain provider-native cache semantics; do not sum them across providers.
+Claude `total_cost_usd` is stored as a client estimate, not measured account spend.
+Missing usage stays unknown; Claude therefore advertises `cost_reporting: false`.
+
+Each captured stdout/stderr stream is capped at 2 MB; pipes continue draining.
 Malformed or incomplete provider output fails closed. Native streaming, full log
 spooling, fine-grained tool/turn/cost caps, automatic debug/review, provider fallback,
-Claude/Gemini/API adapters, adaptive hooks, parallel agents, integration, and benchmark
+Gemini/API adapters, adaptive hooks, parallel scheduling, integration, and benchmark
 comparisons are deferred. See [ROADMAP](ROADMAP.md), [ARCHITECTURE](ARCHITECTURE.md),
 and [requirements](docs/REQUIREMENTS.md).
 
 ## Development
+
+The full portability suite requires Node.js 24 and npm. Python-only engine use does
+not require Node.js unless its configured checks or provider launcher need it.
 
 ```sh
 python -m pytest
@@ -137,5 +159,7 @@ account quota. Offline tests do not make model calls.
 
 The initial live check authenticated and returned measured usage, but this host's
 nested Codex workspace denied file access. Verification failed and the task correctly
-remained BLOCKED. Live editing has therefore not been confirmed on this host. See
+remained BLOCKED. Successful live Codex or Claude editing has not been confirmed on this host.
+M2 portability tests use real adapter transports with deterministic CLI emulators and
+real Python/Node checks; they make no model calls. See
 [validation evidence](docs/VALIDATION.md) for the result and limitations.

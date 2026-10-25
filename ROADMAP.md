@@ -4,10 +4,11 @@
   contracts, transitions, verification policy, initial security model and benchmark design.
 - **M1 — delivered:** sequential execution, Typer CLI, SQLite, FakeProvider, Codex CLI,
   isolated worktrees, context packets, checks/evidence, cancellation and safe checkpoints.
-- **M2 — next:** implement Claude Code using its own permission/output contract, extend
-  capability registry and provider switching, test the same core with both providers
-  across Python and JavaScript fixture structures. Validate detected commands explicitly.
-- **M3:** deterministic task/risk classification, role registry and bounded planner,
+- **M2 - verified offline:** Claude Code permission/output adapter,
+  capability registry and explicit provider switching, conservative command discovery,
+  and Python/JavaScript portability through both adapter transports using CLI emulators.
+  Successful live editing is not established. Detected commands require confirmation.
+- **M3 - next:** deterministic task/risk classification, role registry and bounded planner,
   debugger and independent reviewer workflows; repeat-failure detection and targeted retries.
 - **M4:** supported opt-in hooks, normalized trigger envelopes, idempotency keys,
   deduplication and tested reentrancy guards. No automatic interception claims.

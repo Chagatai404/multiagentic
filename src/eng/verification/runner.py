@@ -1,9 +1,9 @@
-import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
 
 from eng.core.models import Check, VerificationResult
+from eng.execution.commands import resolve_command
 from eng.execution.process import redact, run_process
 
 
@@ -35,7 +35,13 @@ async def run_checks(
             evidence.reason = reason
             results.append(evidence)
             continue
-        argv = [sys.executable if part == "{python}" else part for part in check.argv]
+        try:
+            argv = resolve_command(check.argv)
+        except ValueError as error:
+            evidence.outcome = "UNAVAILABLE"
+            evidence.reason = str(error)
+            results.append(evidence)
+            continue
         result = await run_process(
             argv, workspace, min(check.timeout_seconds, remaining), cancelled=cancelled
         )

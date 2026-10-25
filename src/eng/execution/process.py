@@ -8,7 +8,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from eng.execution.windows_job import WindowsJob
 
@@ -38,7 +38,7 @@ def redact_data(value: Any) -> Any:
     return value
 
 
-def clean_environment(*, provider: bool = False) -> dict[str, str]:
+def clean_environment(*, provider: bool | Literal["codex", "claude"] = False) -> dict[str, str]:
     # Project checks must not inherit the host's API keys or arbitrary environment values.
     allowed = {
         "PATH",
@@ -56,8 +56,15 @@ def clean_environment(*, provider: bool = False) -> dict[str, str]:
         "LANG",
         "LC_ALL",
     }
-    if provider:
+    if provider is True or provider == "codex":
         allowed |= {"CODEX_HOME", "OPENAI_API_KEY", "CODEX_API_KEY"}
+    elif provider == "claude":
+        allowed |= {
+            "ANTHROPIC_API_KEY",
+            "ANTHROPIC_AUTH_TOKEN",
+            "CLAUDE_CODE_OAUTH_TOKEN",
+            "CLAUDE_CONFIG_DIR",
+        }
     result = {key: value for key, value in os.environ.items() if key.upper() in allowed}
     result.update({"GIT_TERMINAL_PROMPT": "0", "ENG_ACTIVE": "1", "PYTHONIOENCODING": "utf-8"})
     return result
@@ -107,7 +114,7 @@ async def run_process(
     *,
     stdin: str | None = None,
     cancelled: Callable[[], bool] = lambda: False,
-    provider: bool = False,
+    provider: bool | Literal["codex", "claude"] = False,
     output_limit: int = 2_000_000,
 ) -> ProcessResult:
     started = time.monotonic()
