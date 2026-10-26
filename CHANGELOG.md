@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased - efficiency E5
+## 1.1.0 - 2026-10-26
+
+Efficiency slices E0-E5 and user-wide installation. Verified offline only; see
+`docs/RELEASE.md` for evidence and what is not claimed.
+
+### Efficiency E5
 
 - Add `eng run --preset` and plan `preset` (economy, balanced, rigorous): repair
   ceiling, E4 repair economies and packet cap, with model calls derived from required
@@ -10,7 +15,7 @@
 - Presets never change classification, review, approval, checks, ownership,
   thresholds, routing or concurrency. No optimality claim; dashboards unchanged.
 
-## Unreleased - efficiency E4
+### Efficiency E4
 
 - Add opt-in `workflow.repair_headroom`: admit a repair only when remaining calls and
   role allocations cover the debugger and any required review.
@@ -18,7 +23,7 @@
   (`repair_unchanged`) instead of re-checking or re-reviewing an unchanged tree.
 - Both default off; existing repair, review, approval and recovery behaviour is kept.
 
-## Unreleased - efficiency E3
+### Efficiency E3
 
 - Add explicit `routing` rules (task type, complexity, risk, role) to project/user
   config. Model routes apply per role call with the current classification; provider
@@ -28,7 +33,7 @@
 - Show routed providers, models and route labels in `eng plan preview`. Explicit
   provider/model choices always win; workflow gates and budgets are unchanged.
 
-## Unreleased - efficiency E2
+### Efficiency E2
 
 - Record a digest-bound dependency handoff (summary, review verdict, changed files,
   interface contracts, policy fingerprint) for every integrated plan node.
@@ -40,7 +45,7 @@
   risk fall back to the model planner. Review, checks, approval and ownership remain.
   The MCP server has no attestation tool. Without reuse, packets are unchanged.
 
-## Unreleased - efficiency E0/E1
+### Efficiency E0/E1
 
 - Add usage report schema 2 with native totals/coverage, selected vs actual model
   distinction, measured final packet sizes/timings, task/role outcomes and saved
@@ -57,7 +62,7 @@
   resume, retaining enclosing task/plan caps and required review/approval gates.
   Retain measured adapter-entry telemetry when a read-only role mutates then raises.
 
-## Unreleased - user-wide installation and keyword triggers
+### User-wide installation and keyword triggers
 
 - Add `eng install` / `eng uninstall`, defaulting to user scope; preserve project scope
   with `--scope project` and existing per-client hook commands.

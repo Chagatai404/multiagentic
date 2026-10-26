@@ -28,7 +28,7 @@ Alternatively use `pipx install` with the same Git URL. For local development, r
 `python -m pip install -e '.[dev]'` in a virtual environment and then `eng install`.
 The hooks keep the installing interpreter's absolute path; keep that environment
 in place and rerun `eng install` after moving, upgrading or recreating it.
-**The tagged `v1.0.0` predates this installer; the commands here require the updated source.**
+**This installer ships in `v1.1.0` and later; the tagged `v1.0.0` predates it.**
 
 `eng install` defaults to **user-wide**, without needing a repository or administrator
 access. It installs prompt hooks for all four supported clients, including clients you
