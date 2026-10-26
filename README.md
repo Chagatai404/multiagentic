@@ -26,6 +26,95 @@ On Windows, use `.venv\Scripts\python.exe` and `.venv\Scripts\eng.exe` directly 
 prefer not to activate the environment. If the venv has no pip, use `uv pip install`.
 With uv installed, `uv sync --extra dev --locked` uses the committed dependency lock.
 
+## Quickstart: use eng from Claude Code or Codex
+
+Not yet on a package index; install from the repository (any Python 3.12+ environment,
+and Git 2.40+ if you will use plans):
+
+```sh
+python -m pip install "git+https://github.com/Chagatai404/multiagentic@claude/practical-clarke-k49993"
+eng --version
+```
+
+**1. Prepare the project once** (a Git repository with at least one commit):
+
+```sh
+cd your-repo
+eng init                       # writes .engineering/project.yaml and .engineering/.gitignore
+```
+
+Open `.engineering/project.yaml` and make sure `checks` lists a command that proves your
+code works, with `confirmed: true`. `eng init` only proposes pytest/`npm test` when it
+finds explicit configuration; otherwise `checks` is empty and you add one yourself, for
+example `- {name: tests, argv: ['{python}', '-m', 'pytest', '-q'], confirmed: true}`.
+Without a confirmed required check nothing can complete. Then commit:
+
+```sh
+git add .engineering && git commit -m "Add eng configuration"
+```
+
+The checkout must be **clean** whenever eng routes a prompt, and `.engineering/state/`
+must be git-ignored (`eng init` writes that). The agent CLI you want eng to run
+(`claude` or `codex`) must be installed and logged in; `eng doctor` shows what it finds.
+
+**2. Install the prompt hook for your client** (project-local, opt-in, reversible):
+
+```sh
+eng hooks install claude-code -p .   # Claude Code; runs the `claude` provider
+eng hooks install codex -p .         # Codex; runs the `codex` provider
+```
+
+This writes `.claude/settings.local.json` or `.codex/hooks.json` (and keeps your checkout
+clean via `.git/info/exclude`); other hooks in those files are preserved. For Codex, start
+it in the project, open `/hooks` and **trust** the eng entry; Codex ignores untrusted hooks.
+Restart Claude Code or Codex if it was already open. Pass `--provider NAME` to run a
+different provider than the client's own (for example a `command_providers` entry).
+
+**3. Trigger it with a prompt.** In the client, start a prompt with `eng:`:
+
+```text
+eng: fix add() so add(2, 3) returns 5
+```
+
+eng claims the prompt, so the client shows a short message instead of answering it, for
+example `eng started task 13683b32... for this request`. The agent then works in a
+separate Git worktree in the background; your checkout is not touched. Follow it from any
+terminal, or just ask the client to run the command for you:
+
+```sh
+eng status                 # all tasks
+eng status TASK_ID         # state, checks, events, the worktree path
+eng usage TASK_ID          # reported token/cost coverage
+```
+
+When the task reaches COMPLETED (required checks passed), review the diff in the task's
+worktree (`.engineering/worktrees/TASK_ID`) and apply it yourself; eng never merges or
+pushes. If it ends PAUSED or BLOCKED, `eng status TASK_ID` says why (typically the model
+call budget, an approval, or a failing check): continue with `eng resume TASK_ID
+--extend-model-calls 2`, or `--approve-high-risk` for high-risk work.
+
+Things to know:
+
+- **Budget.** Routed tasks get the project's `budgets.model_calls`, default **1**. Medium/
+  high-risk or complex requests need a planner or reviewer call, so raise it in
+  `project.yaml` (for example `budgets: {model_calls: 3, wall_seconds: 900}`) or resume.
+- **Modes.** `--mode manual` (default) routes only `eng:` prompts. `--mode adaptive` also
+  routes clearly imperative requests ("Fix the failing test"); `--mode full` adds an
+  independent review. Questions and slash commands always pass through.
+- **If something fails the hook lets your prompt through** with a warning (dirty checkout,
+  unknown provider, state not ignored), so it never traps you; it also never routes from
+  inside an eng-launched agent.
+- **Remove it:** `eng hooks uninstall claude-code -p .` (or `codex`).
+- **No terminal alternative needed:** the same trigger works from a shell with
+  `eng trigger "eng: fix add()" -p .`, and `eng run "..." --accept "..." --provider claude`
+  runs a task directly without any hook.
+- Hooks were verified with emulated client input and real subprocesses, **not** inside a
+  live Claude Code or Codex session; try it on a scratch repository first.
+
+To let the agent also *see* eng's state, add the read-only MCP server:
+`claude mcp add eng -- eng mcp serve -p /path/to/your-repo`. For several agents at once
+see [Parallel plans](#parallel-plans-m6).
+
 ## Use in a project
 
 ```sh
