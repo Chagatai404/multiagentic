@@ -73,5 +73,4 @@ Start with the [README](../README.md); design is in [ARCHITECTURE](../ARCHITECTU
 
 Remaining steps (not performed): run a bounded live trial with your provider, and if you
 want a package-index release, upload the artifacts attached to the `v1.0.0` release (or
-`python -m build`) with your credentials. Note the release page's bundled copy of these
-notes predates this edit and still lists the Release as pending.
+`python -m build`) with your credentials.
