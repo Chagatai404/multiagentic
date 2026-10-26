@@ -132,6 +132,49 @@ reviewer use bounded role-specific context and retained standalone Git snapshots
 Mutation checks detect unexpected changes to the snapshot or task workspace; these are
 not OS sandboxes. The verifier is deterministic and makes no model call.
 
+## Resource visibility
+
+```sh
+eng usage TASK_ID
+eng run 'Fix addition' --accept 'Addition returns the sum' --reported-input-tokens 10000 --reported-output-tokens 2000
+eng resume TASK_ID --extend-input-tokens 10000 --extend-output-tokens 2000
+eng resume TASK_ID --clear-reported-limits
+eng benchmark --repetitions 3 --seed 20261026
+```
+
+`eng usage` aggregates all saved invocations across continuations by provider,
+requested/selected model and role. The selected model is the request metadata; when
+the provider chooses its default, the actual model remains unknown. Each native counter has a known subtotal, reported count and missing
+count; all-missing subtotals stay null. Cache/reasoning counters are not added to
+input/output. Reported cost, client estimates and optional pricing estimates have
+separate provenance. Nothing here measures account spend.
+
+`--reported-input-tokens`, `--reported-output-tokens` and `--reported-cost-usd` stop
+**new** calls after cumulative reported usage reaches the threshold. They cannot cap
+an in-flight call. With no prior invocations the first call may run. Missing coverage
+pauses further model work conservatively. Inspect evidence before extending an
+existing limit; extensions do not resolve unknown coverage. Explicit
+`--clear-reported-limits` removes those limits, including an unknown-coverage stop,
+and cannot be combined with their extensions. Other completion, approval and recovery
+gates still apply; estimates never satisfy a reported-cost threshold.
+
+Project `role_models` maps `planner`, `engineer`, `debugger` and `reviewer` to model
+names; an explicit task `--model` wins for every role. Optional project `pricing`
+entries require provider, model, a user-defined `version` and `label`,
+`input_semantics: inclusive|exclusive`, and input/output USD-per-million rates.
+Optional `cached_input_per_million` and `cache_creation_per_million` preserve the
+chosen native-counter semantics. These are manually supplied estimates, with no
+built-in prices or claim that a version is a current market price. Incomplete or
+incompatible counters leave the estimate unknown.
+
+The benchmark uses scripted edits and external evaluators in disposable repositories;
+it measures fixture behavior, not model intelligence or live-model savings. See
+[benchmark design](benchmarks/README.md) and [validation](docs/VALIDATION.md).
+An in-memory content-hash context cache is available through
+`Engine(..., context_cache_enabled=True)` only, and defaults off. It rechecks bounded
+source bytes; it never caches objectives, handoffs or diffs. The measured Windows
+fixture was slower with caching, so no speed benefit is claimed.
+
 ## Prompt hooks (opt-in)
 
 Claude Code and Codex can route engineering prompts to eng through their
@@ -167,8 +210,9 @@ has not been validated.
 
 SQLite is authoritative under `.engineering/state/eng.sqlite3`. Versioned migrations
 store tasks, executions, transitions, checkpoints, invocations (including reported
-usage), verification records, and artifact references. Invocation schema v2 stores
-each invocation identity, execution, role, status and result, preserving older rows.
+usage), verification records, and artifact references. Migration 4 adds requested
+model metadata to invocation identity, execution, role, status and result, preserving
+older rows.
 Logs and redacted diff evidence live under
 `.engineering/artifacts/TASK_ID/EXECUTION_ID/`. Workspaces remain under
 `.engineering/worktrees/TASK_ID/`. Inspect new files in the preserved workspace; the
@@ -213,10 +257,15 @@ provider-native cache semantics; do not sum them across providers. Claude
 `total_cost_usd` is stored as a client estimate, not measured account spend. Missing
 usage stays unknown; Claude therefore advertises `cost_reporting: false`.
 
-Each captured stdout/stderr stream is capped at 2 MB; pipes continue draining.
-Malformed or incomplete provider output fails closed. Native streaming, full log
-spooling, fine-grained tool/turn/cost caps, provider fallback, Gemini/API adapters,
-adaptive hooks, parallel scheduling, integration, and benchmark comparisons are
+Provider and check stdout/stderr stream to redacted disk artifacts. In-memory diagnostic
+excerpts remain capped at 2 MB per stream; provider summaries at 64,000 characters.
+Codex JSONL records and the Claude JSON result have an 8,000,000-character parsing
+limit; exceeding it fails explicitly while disk capture continues. Malformed or
+incomplete output fails closed. Capture metadata records bytes, truncation, process
+reason and completeness; sink failures are explicit errors. No raw temporary spool
+is written. Redaction covers known environment secrets and credential patterns,
+including chunk boundaries, but is not a general secret scanner. Provider fallback,
+Gemini/API adapters, tool/turn limits, parallel scheduling and integration remain
 deferred. See [ROADMAP](ROADMAP.md), [ARCHITECTURE](ARCHITECTURE.md), and
 [requirements](docs/REQUIREMENTS.md).
 
@@ -226,6 +275,15 @@ M3 development split workflow/roles (medium reasoning), stateful engine recovery
 (high), documentation/checks (low), and independent review (medium) between agents;
 Codex implemented the slices and Claude Code completed review fixes and verification.
 This development process does not implement parallel runtime scheduling.
+
+The repository config allows 600 seconds for its full test check and 900 seconds
+of active task time: the measured Windows suite took 400.49 seconds. These are
+project settings; global defaults are unchanged.
+
+Prefer installing the package into the environment used for development. If an
+isolated worktree uses an external virtual environment and source imports, set
+`PYTHONPATH` to that worktree's **absolute** `src` path; a relative path can resolve
+against detached child working directories and import another checkout.
 
 The full portability suite requires Node.js 24 and npm. Python-only engine use does
 not require Node.js unless its configured checks or provider launcher need it.

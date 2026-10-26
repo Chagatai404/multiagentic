@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
 
-from eng.core.models import Role, State, Task, identity, now
+from eng.core.models import InvocationRecord, ProviderResult, Role, State, Task, identity, now
 from eng.core.policy import TERMINAL, validate_transition
 from eng.core.triggers import CONTENT_DEDUP_SECONDS, TriggerOrigin, TriggerRecord
 from eng.execution.process import redact, redact_data
@@ -52,6 +52,9 @@ MIGRATIONS = [
                            created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
                            payload TEXT NOT NULL);
     """,
+    """
+    ALTER TABLE invocations ADD COLUMN model TEXT;
+    """,
 ]
 
 
@@ -68,6 +71,17 @@ def _trigger_record(row: sqlite3.Row) -> TriggerRecord:
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
+
+
+def _invocation_result(row: sqlite3.Row) -> ProviderResult | None:
+    payload = json.loads(row["result"])
+    if not payload or row["status"] == "started":
+        return None
+    # A legacy result may lack a status while retaining reported counters. The
+    # row's unknown status stays visible; parsing its usage never invents success.
+    if row["status"] == "unknown":
+        payload["status"] = "error"
+    return ProviderResult.model_validate(payload)
 
 
 class Store:
@@ -201,7 +215,7 @@ class Store:
         with self.connection:
             self.save(task)
             self.connection.execute(
-                "INSERT INTO invocations VALUES (?,?,?,?,?,?)",
+                "INSERT INTO invocations VALUES (?,?,?,?,?,?,?)",
                 (
                     task.pending_invocation_id,
                     task.execution_id,
@@ -209,6 +223,7 @@ class Store:
                     task.spec.provider,
                     "started",
                     "{}",
+                    task.pending_model,
                 ),
             )
             self._event(
@@ -218,6 +233,7 @@ class Store:
                     "invocation_id": task.pending_invocation_id,
                     "role": task.pending_role.value,
                     "provider_calls": task.provider_calls,
+                    "model": task.pending_model,
                 },
             )
 
@@ -233,7 +249,7 @@ class Store:
         payload = redact_data(json.loads(result_json))
         with self.connection:
             self.connection.execute(
-                "INSERT INTO invocations VALUES (?,?,?,?,?,?) "
+                "INSERT INTO invocations VALUES (?,?,?,?,?,?,?) "
                 "ON CONFLICT(invocation_id) DO UPDATE SET status=excluded.status, "
                 "result=excluded.result",
                 (
@@ -243,8 +259,29 @@ class Store:
                     task.spec.provider,
                     payload.get("status", "unknown"),
                     json.dumps(payload),
+                    task.pending_model if invocation_id else task.spec.model,
                 ),
             )
+
+    def invocations(self, task_id: str) -> list[InvocationRecord]:
+        """Authoritative call history across every execution, including crash reservations."""
+        self.load(task_id)
+        return [
+            InvocationRecord(
+                invocation_id=row["invocation_id"],
+                execution_id=row["execution_id"],
+                provider=row["provider"],
+                model=row["model"],
+                role=Role(row["role"]),
+                status=row["status"],
+                result=_invocation_result(row),
+            )
+            for row in self.connection.execute(
+                "SELECT i.* FROM invocations i JOIN executions e ON i.execution_id=e.id "
+                "WHERE e.task_id=? ORDER BY i.rowid",
+                (task_id,),
+            )
+        ]
 
     def complete_invocation(
         self,

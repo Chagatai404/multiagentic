@@ -6,10 +6,13 @@ from collections.abc import Callable
 from pathlib import Path
 
 from eng.agents import execute_role, parse_handoff, workspace_digest
+from eng.context.cache import ContextCache
 from eng.context.packet import build_packet
+from eng.core.accounting import budget_stop_reason
 from eng.core.models import (
     ClassificationOverrides,
     ProviderRequest,
+    ProviderResult,
     RepairAttempt,
     Role,
     State,
@@ -49,9 +52,12 @@ ROLE_STATES = {
 class Engine:
     """Sequential adaptive shell; all policy and role effects enter explicitly."""
 
-    def __init__(self, store: Store, provider: Provider) -> None:
+    def __init__(
+        self, store: Store, provider: Provider, *, context_cache_enabled: bool = False
+    ) -> None:
         self.store = store
         self.provider = provider
+        self.context_cache_enabled = context_cache_enabled
 
     def _transition(self, task: Task, state: State, message: str = "") -> None:
         if task.state == state:
@@ -122,6 +128,7 @@ class Engine:
             directory.mkdir(parents=True, exist_ok=True)
             started = time.monotonic()
             previous_elapsed = task.elapsed_seconds
+            context_cache = ContextCache() if self.context_cache_enabled else None
 
             def remaining() -> float:
                 return (
@@ -200,6 +207,7 @@ class Engine:
                         )
                         task.pending_role = None
                         task.pending_invocation_id = None
+                        task.pending_model = None
                     task.checkpoint = "implemented"
                     self.store.checkpoint(task)
                 elif task.checkpoint in {"implemented", "verified", "reviewed"} and not (
@@ -346,14 +354,29 @@ class Engine:
                             + task.next_role.value,
                         )
                         break
+                    if stop_reason := budget_stop_reason(
+                        self.store.invocations(task.id), task.spec.budgets
+                    ):
+                        self._transition(task, State.PAUSED, stop_reason)
+                        break
                     role = task.next_role
                     if role == Role.DEBUGGER and not task.repairs:
                         raise ValueError("Debugger requires a persisted repair attempt")
                     self._validate_workspace(task)
                     if not self._protect(task):
                         break
+                    assert task.workspace is not None
+                    self._classify(task, changed_paths(task.workspace, task.base_commit or "HEAD"))
+                    if task.workflow.approval_required and not task.spec.human_approved:
+                        self._transition(
+                            task,
+                            State.PAUSED,
+                            "Changed paths require explicit --approve-high-risk "
+                            "before further model calls",
+                        )
+                        break
                     if not await self._invoke(
-                        task, role, directory, cancelled, remaining, evidence
+                        task, role, directory, cancelled, remaining, evidence, context_cache
                     ):
                         break
                     if role == Role.REVIEWER:
@@ -411,9 +434,10 @@ class Engine:
         cancelled: Callable[[], bool],
         remaining: Callable[[], float],
         evidence: str,
+        context_cache: ContextCache | None = None,
     ) -> bool:
         context_started = time.monotonic()
-        prompt = build_packet(task, role, evidence=evidence)
+        prompt = build_packet(task, role, evidence=evidence, cache=context_cache)
         self.store.event(
             task,
             "context",
@@ -421,6 +445,8 @@ class Engine:
                 "role": role.value,
                 "chars": len(prompt),
                 "duration_seconds": time.monotonic() - context_started,
+                "cache_enabled": context_cache is not None,
+                "cache": context_cache.snapshot() if context_cache is not None else None,
             },
         )
         if cancelled() or remaining() <= 0:
@@ -440,6 +466,9 @@ class Engine:
         )
         task.pending_role = role
         task.pending_invocation_id = invocation_id
+        task.pending_model = (
+            task.spec.model if task.spec.model is not None else task.config.role_models.get(role)
+        )
         task.provider_calls += 1
         task.checkpoint = "provider_started"
         task.review_passed = False
@@ -448,21 +477,36 @@ class Engine:
             task.verified_digest = None
         self.store.begin_invocation(task)
         assert task.workspace is not None and task.execution_id is not None
-        result = await execute_role(
-            self.provider,
-            ProviderRequest(
-                task_id=task.id,
-                execution_id=task.execution_id,
-                role=role,
-                workspace=task.workspace,
-                prompt=prompt,
-                model=task.spec.model,
-                timeout_seconds=min(task.spec.budgets.provider_seconds, remaining()),
-            ),
-            task,
-            artifacts,
-            cancelled,
-        )
+        role_started = time.monotonic()
+        result: ProviderResult | None = None
+        try:
+            result = await execute_role(
+                self.provider,
+                ProviderRequest(
+                    task_id=task.id,
+                    execution_id=task.execution_id,
+                    role=role,
+                    workspace=task.workspace,
+                    prompt=prompt,
+                    model=task.pending_model,
+                    timeout_seconds=min(task.spec.budgets.provider_seconds, remaining()),
+                ),
+                task,
+                artifacts,
+                cancelled,
+            )
+        finally:
+            self.store.event(
+                task,
+                "role_elapsed",
+                {
+                    "invocation_id": invocation_id,
+                    "role": role.value,
+                    "duration_seconds": time.monotonic() - role_started,
+                    "provider_duration_seconds": result.duration_seconds if result else None,
+                    "timing_scope": "role setup, provider execution and mutation detection",
+                },
+            )
         task.usage = result.usage
         if cancelled() or result.status == "cancelled":
             self.store.invocation(
@@ -490,6 +534,7 @@ class Engine:
             # A known malformed result is not an actionable code failure or unknown edit.
             task.pending_role = None
             task.pending_invocation_id = None
+            task.pending_model = None
             task.next_role = role
             task.checkpoint = "verified" if role == Role.REVIEWER else "prepared"
             self.store.complete_invocation(task, result.model_dump_json(), invocation_id, role)
@@ -498,6 +543,7 @@ class Engine:
         task.handoffs.append(handoff)
         task.pending_role = None
         task.pending_invocation_id = None
+        task.pending_model = None
         if role == Role.PLANNER:
             task.planning_completed = True
             task.checkpoint = "planned"
@@ -571,7 +617,13 @@ class Engine:
                 path = Path(result.artifact)
                 root = task.project / ".engineering" / "artifacts" / task.id
                 if path.resolve().is_relative_to(root.resolve()) and path.is_file():
-                    log = path.read_text(encoding="utf-8", errors="replace")[-5000:]
+                    # A UTF-8 character occupies at most four bytes. Read enough
+                    # for the existing character tail without loading the full log.
+                    with path.open("rb") as handle:
+                        size = handle.seek(0, 2)
+                        handle.seek(max(0, size - 20000))
+                        tail = handle.read(20000).decode("utf-8", errors="replace")
+                    log = tail.replace("\r\n", "\n").replace("\r", "\n")[-5000:]
             if task.workspace:
                 log = log.replace(str(task.workspace), "<workspace>")
                 log = log.replace(str(task.workspace).replace("\\", "/"), "<workspace>")

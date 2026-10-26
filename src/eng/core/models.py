@@ -108,7 +108,7 @@ class Usage(Contract):
     cached_input_tokens: int | None = Field(default=None, ge=0)
     cache_creation_input_tokens: int | None = Field(default=None, ge=0)
     reasoning_tokens: int | None = Field(default=None, ge=0)
-    cost_usd: float | None = Field(default=None, ge=0)
+    cost_usd: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     cost_source: Literal["reported", "client_estimate", "unknown"] = "unknown"
     source: Literal["provider", "unknown"] = "unknown"
 
@@ -118,6 +118,33 @@ class Budgets(Contract):
     provider_seconds: float = Field(default=180, gt=0, le=86400)
     model_calls: int = Field(default=1, ge=1, le=100)
     context_chars: int = Field(default=16000, ge=256, le=1000000)
+    reported_input_tokens: int | None = Field(default=None, gt=0)
+    reported_output_tokens: int | None = Field(default=None, gt=0)
+    reported_cost_usd: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+
+
+class PricingRule(Contract):
+    """User supplied estimate; rates are USD per million native tokens."""
+
+    provider: str = Field(min_length=1)
+    model: str = Field(min_length=1)
+    version: str = Field(min_length=1)
+    label: str = Field(min_length=1)
+    input_semantics: Literal["inclusive", "exclusive"]
+    input_per_million: float = Field(ge=0, allow_inf_nan=False)
+    output_per_million: float = Field(ge=0, allow_inf_nan=False)
+    cached_input_per_million: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    cache_creation_per_million: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+
+
+class InvocationRecord(Contract):
+    invocation_id: str
+    execution_id: str
+    provider: str
+    model: str | None = None
+    role: Role
+    status: str
+    result: "ProviderResult | None" = None
 
 
 class Check(Contract):
@@ -154,6 +181,23 @@ class ProjectConfig(Contract):
     budgets: Budgets = Field(default_factory=Budgets)
     workflow: WorkflowPolicy = Field(default_factory=WorkflowPolicy)
     provider: str = "codex"
+    role_models: dict[Role, str] = Field(default_factory=dict)
+    pricing: list[PricingRule] = Field(default_factory=list)
+
+    @field_validator("role_models")
+    @classmethod
+    def valid_role_models(cls, models: dict[Role, str]) -> dict[Role, str]:
+        if any(not value.strip() for value in models.values()):
+            raise ValueError("role model names cannot be blank")
+        return models
+
+    @field_validator("pricing")
+    @classmethod
+    def unique_pricing(cls, rules: list[PricingRule]) -> list[PricingRule]:
+        keys = [(rule.provider, rule.model) for rule in rules]
+        if len(keys) != len(set(keys)):
+            raise ValueError("pricing must have one explicit rule per provider/model")
+        return rules
 
     @field_validator("checks")
     @classmethod
@@ -175,6 +219,13 @@ class TaskSpec(Contract):
         default_factory=ClassificationOverrides
     )
     human_approved: bool = False
+
+    @field_validator("model")
+    @classmethod
+    def valid_model(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
+            raise ValueError("model cannot be blank")
+        return value
 
     @field_validator("description", "acceptance")
     @classmethod
@@ -263,6 +314,7 @@ class Task(Contract):
     repairs: list[RepairAttempt] = Field(default_factory=list)
     pending_role: Role | None = None
     pending_invocation_id: str | None = None
+    pending_model: str | None = None
     next_role: Role | None = None
     planning_completed: bool = False
     review_passed: bool = False

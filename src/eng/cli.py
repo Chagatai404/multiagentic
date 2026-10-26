@@ -8,6 +8,7 @@ from typing import Annotated, NoReturn
 import typer
 from pydantic import ValidationError
 
+from eng.core.accounting import decimal_cost_total, usage_report
 from eng.core.engine import Engine
 from eng.core.models import (
     ClassificationOverrides,
@@ -116,6 +117,16 @@ def run(
     risk: Annotated[Risk | None, typer.Option(help="Minimum task risk")] = None,
     max_repairs: Annotated[int | None, typer.Option(min=0, max=10)] = None,
     model_calls: Annotated[int | None, typer.Option(min=1, max=100)] = None,
+    reported_input_tokens: Annotated[
+        int | None, typer.Option(min=1, help="Stop new calls at cumulative reported input tokens")
+    ] = None,
+    reported_output_tokens: Annotated[
+        int | None, typer.Option(min=1, help="Stop new calls at cumulative reported output tokens")
+    ] = None,
+    reported_cost_usd: Annotated[
+        float | None,
+        typer.Option(min=0.000001, help="Reported-cost stop threshold; no in-flight cap"),
+    ] = None,
     approve_high_risk: Annotated[
         bool, typer.Option(help="Explicitly approve this high-risk task")
     ] = False,
@@ -134,6 +145,12 @@ def run(
             budget.provider_seconds = provider_seconds
         if model_calls is not None:
             budget.model_calls = model_calls
+        if reported_input_tokens is not None:
+            budget.reported_input_tokens = reported_input_tokens
+        if reported_output_tokens is not None:
+            budget.reported_output_tokens = reported_output_tokens
+        if reported_cost_usd is not None:
+            budget.reported_cost_usd = reported_cost_usd
         if max_repairs is not None:
             config.workflow.max_repairs = max_repairs
         selected = provider_for(provider or config.provider, fake_change)
@@ -195,16 +212,49 @@ def continue_task(
     extend_seconds: float,
     extend_model_calls: int = 0,
     approve_high_risk: bool = False,
+    extend_input_tokens: int = 0,
+    extend_output_tokens: int = 0,
+    extend_cost_usd: float = 0,
+    clear_reported_limits: bool = False,
 ) -> None:
     store = None
     try:
         root = repository_root(project)
         store = Store(root)
-        if extend_seconds or extend_model_calls or approve_high_risk:
+        if (
+            extend_seconds
+            or extend_model_calls
+            or approve_high_risk
+            or extend_input_tokens
+            or extend_output_tokens
+            or extend_cost_usd
+            or clear_reported_limits
+        ):
             with task_lock(root, task_id):
                 task = store.load(task_id)
                 if task.state in TERMINAL:
                     raise ValueError("Cannot extend a terminal task")
+                if clear_reported_limits and (
+                    extend_input_tokens or extend_output_tokens or extend_cost_usd
+                ):
+                    raise ValueError("Clear reported limits and extensions are mutually exclusive")
+                for field, extension in (
+                    ("reported_input_tokens", extend_input_tokens),
+                    ("reported_output_tokens", extend_output_tokens),
+                    ("reported_cost_usd", extend_cost_usd),
+                ):
+                    current = getattr(task.spec.budgets, field)
+                    if extension:
+                        if current is None:
+                            raise ValueError(f"Cannot extend an unset {field} limit")
+                        total = (
+                            float(decimal_cost_total([current, extension]))
+                            if field == "reported_cost_usd"
+                            else current + extension
+                        )
+                        setattr(task.spec.budgets, field, total)
+                    if clear_reported_limits:
+                        setattr(task.spec.budgets, field, None)
                 task.spec.budgets.wall_seconds += extend_seconds
                 task.spec.budgets.model_calls += extend_model_calls
                 if approve_high_risk:
@@ -217,6 +267,10 @@ def continue_task(
                     {
                         "seconds": extend_seconds,
                         "model_calls": extend_model_calls,
+                        "input_tokens": extend_input_tokens,
+                        "output_tokens": extend_output_tokens,
+                        "cost_usd": extend_cost_usd,
+                        "reported_limits_cleared": clear_reported_limits,
                     },
                 )
         task = store.load(task_id)
@@ -249,11 +303,58 @@ def resume(
     approve_high_risk: Annotated[
         bool, typer.Option(help="Explicitly approve the saved high-risk task")
     ] = False,
+    extend_input_tokens: Annotated[int, typer.Option(min=0)] = 0,
+    extend_output_tokens: Annotated[int, typer.Option(min=0)] = 0,
+    extend_cost_usd: Annotated[float, typer.Option(min=0)] = 0,
+    clear_reported_limits: Annotated[
+        bool,
+        typer.Option(help="Explicitly remove reported limits, including unknown-coverage stops"),
+    ] = False,
 ) -> None:
     """Continue a safe checkpoint; uncertain provider work requires --verify-only."""
     continue_task(
-        task_id, project, verify_only, extend_seconds, extend_model_calls, approve_high_risk
+        task_id,
+        project,
+        verify_only,
+        extend_seconds,
+        extend_model_calls,
+        approve_high_risk,
+        extend_input_tokens,
+        extend_output_tokens,
+        extend_cost_usd,
+        clear_reported_limits,
     )
+
+
+@app.command()
+def usage(task_id: str, project: Project = Path(".")) -> None:
+    """Report native usage and missing coverage across every task execution."""
+    store = None
+    try:
+        store = Store(repository_root(project))
+        task = store.load(task_id)
+        report = usage_report(store.invocations(task_id), task.config.pricing)
+        emit({"task_id": task_id, **report.model_dump(mode="json")})
+    except (ValueError, OSError) as error:
+        fail(error)
+    finally:
+        if store is not None:
+            store.close()
+
+
+@app.command()
+def benchmark(
+    repetitions: Annotated[int, typer.Option(min=1, max=10)] = 1,
+    seed: Annotated[int, typer.Option(min=0, max=4294967295)] = 0,
+    scenario: Annotated[list[str] | None, typer.Option(help="Repeatable scenario name")] = None,
+) -> None:
+    """Run offline scripted fixtures; no paid models or real-model quality claims."""
+    from eng.benchmark import run_benchmark
+
+    try:
+        emit(run_benchmark(repetitions=repetitions, seed=seed, scenarios=scenario))
+    except (ValueError, OSError) as error:
+        fail(error)
 
 
 @app.command()

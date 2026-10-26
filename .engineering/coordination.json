@@ -1,27 +1,26 @@
 {
-  "milestone": "M4",
-  "branch": "agent/claude/m4-triggers",
-  "base_commit": "e95352e",
-  "active_agent": "claude",
-  "phase": "m4_verified_committed_locally",
-  "note": "Claude Code lead with three slice subagents in this checkout; exclusive file ownership per docs/M4_PLAN.md. Codex: do not edit here; use a separate agent/codex/<task> worktree.",
+  "milestone": "M5",
+  "branch": "agent/codex/m5-observability",
+  "base_commit": "55afd35",
+  "active_agent": "codex",
+  "phase": "final_package_verification",
+  "note": "Isolated Codex worktree; Claude M4 checkout unchanged. Ownership and contracts in docs/M5_PLAN.md.",
   "owners": {
-    "A_routing_storage": "core/triggers.py functions, storage/store.py, tests/unit/test_triggers.py, tests/unit/test_trigger_storage.py",
-    "B_clients_install": "integrations/__init__.py, integrations/clients.py, integrations/install.py, tests/unit/test_clients.py, tests/unit/test_install.py",
-    "C_runner": "integrations/runner.py, tests/unit/test_runner.py",
-    "D_lead": "integrations/hook.py, cli.py, tests/integration/test_triggers_e2e.py, docs"
+    "transport": "m5_transport_impl: execution/process.py, capture helpers, codex.py, claude.py, verification/runner.py, new focused tests",
+    "accounting": "m5_accounting_impl: models, accounting, engine, store, CLI, new focused tests",
+    "context_benchmark": "m5_context_impl: context, narrow Git normalization, benchmark harness, new focused tests"
   },
   "reasoning": {
-    "A_routing_storage": "medium",
-    "B_clients_install": "medium",
-    "C_runner": "high - Windows process detachment semantics",
-    "D_lead": "lead agent"
+    "transport": "medium",
+    "accounting": "high: durable resource accounting and recovery",
+    "context_benchmark": "medium"
   },
   "rules": [
-    "No overlapping edits",
+    "Exclusive file ownership",
     "No paid model calls",
-    "Never install hooks outside tmp_path test directories",
-    "No commits by slice agents",
-    "No automatic push"
-  ]
+    "No real-client hook install",
+    "No automatic push",
+    "Commit only after independent verification"
+  ],
+  "verification": "Full offline run: 429 passed, 1 paid opt-in skipped; final bounded-tail change: 33 affected regression tests passed. Independent medium review and low boundary audit complete; final package refresh pending."
 }

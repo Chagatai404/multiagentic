@@ -195,3 +195,59 @@ hook); Codex `commandWindows` quoting when the interpreter path contains spaces;
 detachment (CI only). Routed task descriptions are stored in task payloads like any
 `eng run` description; trigger digests are unsalted. A turn-keyed claim interrupted
 before its runner started is never retried automatically; the prompt passes through.
+
+## M5 - verified offline
+
+Independent Windows/Python 3.14 verification collected 430 tests: 429 passed and
+one opt-in paid live test was skipped, in 400.49 seconds. That run imported Engine
+before the final bounded-tail change; the tail fix separately passed 33 affected regression tests in 173.53 seconds
+(three new bounded-tail tests, 20 adaptive-engine tests and 10 M5 resource tests). Ruff, strict
+mypy for Windows and Linux (40 source files), and `uv lock --check` (28 packages)
+passed. Final wheel and source-distribution builds passed using cached setuptools 84.2.1
+with `--no-isolation`; the isolated build could not resolve the package index, and
+the root virtual environment lacked setuptools. Cached build tooling was supplied
+without modifying that environment. All 40 Python files and LICENSE matched the
+source in both distributions; README matched the source distribution and normalized
+wheel metadata. Eight isolated fresh-wheel CLI smoke checks passed, importing from
+site-packages. The final Python source hash was
+`1c6b161a42c3ce7ada248acbd2a5f6c9a9fd3af379713cff050223462a54a40b`. Focused transport/accounting/context runs are supporting checks, not
+additional full-suite tests.
+
+The repository's own test timeout is now 600 seconds and its active task budget is
+900 seconds, accommodating the measured 400.49-second suite. Global defaults are
+unchanged. During validation, a relative PYTHONPATH let detached children import the
+M4 checkout; an absolute M5 source path corrected the environment, and 21 hook tests
+passed. This was a test import correction, not a product hook change. The main
+Claude checkout was unchanged.
+
+Independent review prompted fixes
+for overlapping known-secret redaction, preservation of numeric JSON counters, and
+decimal reported-dollar threshold comparisons. A later boundary review found that
+loading an entire check log before slicing its tail would scale with full artifacts.
+The fix seeks and reads at most 20,000 bytes, preserves the final 5,000-character
+failure excerpt, and passed three independently reviewed focused tests. No live calls or client hook installs
+were used for this work.
+
+The committed [raw Windows report](../benchmarks/results/m5-windows-offline.json)
+was measured on Windows, Python 3.14, 2026-10-26, seed 20261026, with six scenarios,
+three repetitions and three arms (54 observations, 18 per arm). Scripted edits are
+fixtures, not models. All token and cost measurements remain null.
+
+| Arm | Verified success | First-pass success | Calls | Repairs | Escaped defects | Median / P95 seconds |
+|---|---:|---:|---:|---:|---:|---:|
+| A | 9/18 | 9/18 | 18 | 0 | 9 | 0.401403 / 0.701993 |
+| B | 9/18 | 9/18 | 18 | 0 | 0 | 0.618225 / 1.575039 |
+| C | 18/18 | 9/18 | 39 | 9 | 0 | 4.012659 / 13.788429 |
+
+B required intervention in 9 fixtures according to a next-action proxy; actual
+human interventions were zero in every arm. Timings exclude external assessment;
+B/C include their own verification checks. P95 is nearest rank on small samples,
+not a population latency claim. Differences do not establish real-model quality,
+spend savings or optimal invocation counts.
+
+Context comparison produced 20 equal packets, 19 cache hits and one miss. Median
+cached construction was 0.138097 seconds versus 0.071304 uncached: caching was slower
+on this fixture and remains constructor opt-in, off by default. No CLI cache flag
+or performance improvement is claimed. Runtime scheduling and Git/CI integration
+remain M6; tool/turn telemetry remains unsupported. Historical live-editing, live
+client-hook and POSIX runtime limitations above still apply.

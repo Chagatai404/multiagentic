@@ -24,58 +24,101 @@ def codex_command() -> list[str]:
     return [executable]
 
 
-def parse_events(stdout: str) -> ProviderResult:
-    summary = ""
-    session_id = None
-    usage = Usage()
-    completed = False
-    try:
-        for line in stdout.splitlines():
-            if not line.strip():
-                continue
+# Each JSONL record is bounded independently; large streams keep late usage.
+MAX_RECORD_CHARS = 8_000_000
+MAX_SUMMARY_CHARS = 64_000
+
+
+class EventParser:
+    def __init__(self) -> None:
+        self.pending = ""
+        self.dropping = False
+        self.summary = ""
+        self.session_id: str | None = None
+        self.usage = Usage()
+        self.completed = False
+        self.error_kind: str | None = None
+        self.error_summary = ""
+
+    def feed(self, text: str) -> None:
+        # splitlines creates only chunk-sized temporaries; pending has a fixed cap.
+        pieces = text.split("\n")
+        for index, piece in enumerate(pieces):
+            if not self.dropping:
+                if len(self.pending) + len(piece) > MAX_RECORD_CHARS:
+                    self.pending = ""
+                    self.dropping = True
+                    self.error_kind = "oversized_output"
+                    self.error_summary = "Codex JSONL record exceeds 8000000 characters"
+                else:
+                    self.pending += piece
+            if index < len(pieces) - 1:
+                if not self.dropping:
+                    self.record(self.pending)
+                self.pending = ""
+                self.dropping = False
+
+    def record(self, line: str) -> None:
+        if not line.strip():
+            return
+        try:
             event: Any = json.loads(line)
             if not isinstance(event, dict) or not isinstance(event.get("type"), str):
                 raise ValueError("Event must be an object with a type")
             if event["type"] in {"turn.failed", "error"}:
-                return ProviderResult(
-                    status="error",
-                    error_kind="provider_error",
-                    summary=redact(str(event.get("error", event.get("message", "")))),
-                )
+                self.error_kind = self.error_kind or "provider_error"
+                self.error_summary = redact(str(event.get("error", event.get("message", ""))))[
+                    :MAX_SUMMARY_CHARS
+                ]
             if event["type"] == "thread.started":
-                session_id = event.get("thread_id")
-                if not isinstance(session_id, str):
+                session = event.get("thread_id")
+                if not isinstance(session, str):
                     raise ValueError("thread_id must be a string")
+                self.session_id = session[:MAX_SUMMARY_CHARS]
             if event["type"] == "item.completed":
                 item = event.get("item", {})
                 if item.get("type") == "agent_message":
                     summary = item.get("text", "")
                     if not isinstance(summary, str):
                         raise ValueError("agent_message text must be a string")
+                    self.summary = redact(summary)[:MAX_SUMMARY_CHARS]
             if event["type"] == "turn.completed":
-                completed = True
+                self.completed = True
                 raw = event.get("usage")
                 if raw is not None and not isinstance(raw, dict):
                     raise ValueError("usage must be an object when reported")
                 if isinstance(raw, dict):
-                    usage = Usage(
+                    self.usage = Usage(
                         input_tokens=raw.get("input_tokens"),
                         output_tokens=raw.get("output_tokens"),
                         cached_input_tokens=raw.get("cached_input_tokens"),
                         reasoning_tokens=raw.get("reasoning_output_tokens"),
                         source="provider",
                     )
-    except (ValueError, TypeError, AttributeError) as error:
-        return ProviderResult(status="error", error_kind="malformed_output", summary=str(error))
-    if not completed:
+        except (ValueError, TypeError, AttributeError) as error:
+            self.error_kind = self.error_kind or "malformed_output"
+            self.error_summary = redact(str(error))[:MAX_SUMMARY_CHARS]
+
+    def finish(self) -> ProviderResult:
+        if self.pending and not self.dropping:
+            self.record(self.pending)
+        self.pending = ""
+        kind = self.error_kind or (None if self.completed else "incomplete_output")
         return ProviderResult(
-            status="error",
-            error_kind="incomplete_output",
-            summary="No turn.completed event received",
+            status="error" if kind else "success",
+            error_kind=kind,
+            summary=self.error_summary or (
+                "No turn.completed event received" if kind == "incomplete_output" else self.summary
+            ),
+            usage=self.usage,
+            session_id=self.session_id,
         )
-    return ProviderResult(
-        status="success", summary=redact(summary), usage=usage, session_id=session_id
-    )
+
+
+def parse_events(stdout: str) -> ProviderResult:
+    parser = EventParser()
+    parser.feed(stdout)
+    return parser.finish()
 
 
 class CodexProvider:
@@ -119,6 +162,7 @@ class CodexProvider:
         if request.model:
             command += ["--model", request.model]
         command += ["-"]
+        parser = EventParser()
         result = await run_process(
             command,
             request.workspace,
@@ -126,10 +170,20 @@ class CodexProvider:
             stdin=request.prompt,
             cancelled=cancelled,
             provider=True,
+            stdout_path=artifact_dir / "provider.jsonl",
+            stderr_path=artifact_dir / "provider.stderr.log",
+            stdout_json=True,
+            stdout_observer=parser.feed,
         )
-        artifact_dir.mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240 - small local evidence writes
-        (artifact_dir / "provider.jsonl").write_text(redact(result.stdout), encoding="utf-8")
-        (artifact_dir / "provider.stderr.log").write_text(redact(result.stderr), encoding="utf-8")
+        # Legacy/mocked transports return only strings and do not call observers.
+        if result.capture_metadata is None:
+            artifact_dir.mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240
+            (artifact_dir / "provider.jsonl").write_text(redact(result.stdout), encoding="utf-8")
+            (artifact_dir / "provider.stderr.log").write_text(
+                redact(result.stderr), encoding="utf-8"
+            )
+            parser.feed(result.stdout)
+        parsed = parser.finish()
         if result.reason:
             status: ProviderStatus = "error"
             if result.reason == "cancelled":
@@ -141,6 +195,8 @@ class CodexProvider:
                 error_kind=result.reason,
                 summary=redact(result.stderr[-4000:]),
                 duration_seconds=result.duration_seconds,
+                usage=parsed.usage,
+                session_id=parsed.session_id,
             )
         if result.exit_code != 0:
             stderr = result.stderr.lower()
@@ -154,7 +210,8 @@ class CodexProvider:
                 error_kind=kind,
                 summary=redact(result.stderr[-4000:]),
                 duration_seconds=result.duration_seconds,
+                usage=parsed.usage,
+                session_id=parsed.session_id,
             )
-        parsed = parse_events(result.stdout)
         parsed.duration_seconds = result.duration_seconds
         return parsed

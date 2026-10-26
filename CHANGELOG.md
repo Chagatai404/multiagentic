@@ -1,5 +1,18 @@
 # Changelog
 
+## M5 - verified offline
+
+- Stream redacted provider/check artifacts with bounded excerpts, explicit capture
+  failures and completeness metadata; bound protocol parsing separately from disk logs.
+- Add per-invocation selected models, `eng usage`, native-field coverage, manually
+  versioned pricing estimates, role model routing and reported-usage stop/resume limits.
+- Add opt-in in-memory content-hash context reuse (default off) and reproducible
+  scripted A/B/C benchmarks. Windows cache measurements show no speed improvement.
+- Preserve completion/review/approval and unknown-outcome protections. Live editing,
+  live client hooks, runtime scheduling and Git/CI triggers remain unvalidated/deferred.
+- Offline suite: 429 passed, 1 opt-in paid live test skipped (400.49 seconds);
+  final build and fresh-wheel smoke passed. Historical results below are unchanged. See docs/VALIDATION.md for the measured fixture evidence.
+
 ## M4 - verified offline
 
 - Add normalized TriggerEnvelope contracts with pure, high-precision routing: `eng:`

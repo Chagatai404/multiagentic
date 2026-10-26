@@ -1,4 +1,5 @@
 import asyncio
+import codecs
 import os
 import re
 import signal
@@ -10,11 +11,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from eng.execution.capture import Capture, save_metadata
 from eng.execution.windows_job import WindowsJob
 
 SECRET_NAMES = re.compile(r"(?:token|secret|password|api.?key|credential|private.?key)", re.I)
 SECRET_PAIR = re.compile(
-    r"(?i)([\"']?(?:[\w-]*[_-])?(?:token|secret|password|api[_-]?key|credential|private[_-]?key)"
+    r"(?i)([\"']?(?:token|secret|password|api[_-]?key|credential|private[_-]?key)"
     r"[\"']?\s*[:=]\s*[\"']?)([^\s\"',}]+)"
 )
 
@@ -77,6 +79,7 @@ class ProcessResult:
     stderr: str
     duration_seconds: float
     reason: str | None = None
+    capture_metadata: dict[str, dict[str, object]] | None = None
 
 
 async def stop_tree(process: asyncio.subprocess.Process, job: WindowsJob | None = None) -> None:
@@ -116,6 +119,10 @@ async def run_process(
     cancelled: Callable[[], bool] = lambda: False,
     provider: bool | Literal["codex", "claude"] = False,
     output_limit: int = 2_000_000,
+    stdout_path: Path | None = None,
+    stderr_path: Path | None = None,
+    stdout_json: bool = False,
+    stdout_observer: Callable[[str], None] | None = None,
 ) -> ProcessResult:
     started = time.monotonic()
     options: dict[str, object] = {}
@@ -148,16 +155,27 @@ async def run_process(
                 None, "", redact(str(error)), time.monotonic() - started, "process_isolation"
             )
 
-    async def drain(stream: asyncio.StreamReader | None) -> str:
-        chunks = bytearray()
-        if stream is not None:
-            while chunk := await stream.read(65536):
-                # Keep draining after the retention limit to avoid pipe deadlocks.
-                chunks.extend(chunk[: max(0, output_limit - len(chunks))])
-        return chunks.decode("utf-8", errors="replace")
+    out_capture = Capture(stdout_path, output_limit, json_output=stdout_json)
+    err_capture = Capture(stderr_path, output_limit)
+
+    async def drain(stream: asyncio.StreamReader | None, capture: Capture) -> str:
+        decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+        try:
+            if stream is not None:
+                while chunk := await stream.read(65536):
+                    capture.feed(chunk)
+                    if capture is out_capture and stdout_observer is not None:
+                        stdout_observer(decoder.decode(chunk))
+        finally:
+            if capture is out_capture and stdout_observer is not None:
+                stdout_observer(decoder.decode(b"", final=True))
+            capture.finish()
+        return capture.text
 
     async def communicate() -> tuple[str, str]:
-        output = asyncio.gather(drain(process.stdout), drain(process.stderr))
+        output = asyncio.gather(
+            drain(process.stdout, out_capture), drain(process.stderr, err_capture)
+        )
         if stdin is not None and process.stdin is not None:
             try:
                 process.stdin.write(stdin.encode("utf-8"))
@@ -174,6 +192,9 @@ async def run_process(
     reason = None
     try:
         while not communication.done():
+            if out_capture.error or err_capture.error:
+                reason = "artifact_error"
+                break
             if cancelled():
                 reason = "cancelled"
                 break
@@ -196,4 +217,16 @@ async def run_process(
                 os.killpg(process.pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
-    return ProcessResult(process.returncode, stdout, stderr, time.monotonic() - started, reason)
+    metadata = {"stdout": out_capture.metadata(), "stderr": err_capture.metadata()}
+    if out_capture.error or err_capture.error:
+        reason = "artifact_error"
+    for stream_metadata in metadata.values():
+        stream_metadata["process_reason"] = reason
+    if stdout_path is not None:
+        try:
+            save_metadata(stdout_path.with_name(stdout_path.name + ".metadata.json"), metadata)
+        except OSError:
+            reason = "artifact_error"
+    return ProcessResult(
+        process.returncode, stdout, stderr, time.monotonic() - started, reason, metadata
+    )

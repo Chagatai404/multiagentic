@@ -120,6 +120,34 @@ def parse_result(stdout: str, exit_code: int | None = 0) -> ProviderResult:
     )
 
 
+# Claude print/json is one result object. Keep a bounded raw in-memory record;
+# oversized objects retain complete redacted evidence but fail protocol parsing.
+MAX_RESULT_CHARS = 8_000_000
+
+
+class ResultBuffer:
+    def __init__(self) -> None:
+        self.parts: list[str] = []
+        self.size = 0
+        self.oversized = False
+
+    def feed(self, text: str) -> None:
+        self.size += len(text)
+        if self.size > MAX_RESULT_CHARS:
+            self.oversized = True
+            self.parts.clear()
+        elif not self.oversized:
+            self.parts.append(text)
+
+    def parse(self, exit_code: int | None) -> ProviderResult:
+        if self.oversized:
+            return ProviderResult(
+                status="error", error_kind="oversized_output",
+                summary="Claude JSON result exceeds 8000000 characters",
+            )
+        return parse_result("".join(self.parts), exit_code)
+
+
 class ClaudeProvider:
     name = "claude"
     capabilities = Capabilities(
@@ -165,6 +193,7 @@ class ClaudeProvider:
         ]
         if request.model:
             command += ["--model", request.model]
+        buffer = ResultBuffer()
         result = await run_process(
             command,
             request.workspace,
@@ -172,15 +201,24 @@ class ClaudeProvider:
             stdin=request.prompt,
             cancelled=cancelled,
             provider="claude",
+            stdout_path=artifact_dir / "provider.json",
+            stderr_path=artifact_dir / "provider.stderr.log",
+            stdout_json=True,
+            stdout_observer=buffer.feed,
         )
-        artifact_dir.mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240
-        try:
-            evidence = json.dumps(redact_data(json.loads(result.stdout)), ensure_ascii=False)
-        except ValueError:
-            evidence = redact(result.stdout)
-        (artifact_dir / "provider.json").write_text(evidence, encoding="utf-8")
-        (artifact_dir / "provider.stderr.log").write_text(redact(result.stderr), encoding="utf-8")
-        parsed = parse_result(result.stdout, result.exit_code)
+        if result.capture_metadata is None:
+            # Backward compatibility with injected transports returning only strings.
+            artifact_dir.mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240
+            try:
+                evidence = json.dumps(redact_data(json.loads(result.stdout)), ensure_ascii=False)
+            except ValueError:
+                evidence = redact(result.stdout)
+            (artifact_dir / "provider.json").write_text(evidence, encoding="utf-8")
+            (artifact_dir / "provider.stderr.log").write_text(
+                redact(result.stderr), encoding="utf-8"
+            )
+            buffer.feed(result.stdout)
+        parsed = buffer.parse(result.exit_code)
         if result.reason:
             status: ProviderStatus = "error"
             if result.reason == "cancelled":
@@ -198,4 +236,5 @@ class ClaudeProvider:
             )
             parsed.summary = redact(result.stderr[-4000:])
         parsed.duration_seconds = result.duration_seconds
+        parsed.summary = parsed.summary[:64_000]
         return parsed

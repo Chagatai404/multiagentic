@@ -2,6 +2,8 @@ schema_version: 1
 name: multiagentic
 languages: [python]
 provider: codex
+budgets:
+  wall_seconds: 900
 checks:
   - name: lint
     argv: ['{python}', '-m', ruff, check, .]
@@ -10,6 +12,6 @@ checks:
     confirmed: true
   - name: tests
     argv: ['{python}', '-m', pytest, '-q']
-    timeout_seconds: 180
+    timeout_seconds: 600
     required: true
     confirmed: true

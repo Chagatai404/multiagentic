@@ -28,7 +28,8 @@ def git(repository: Path, *arguments: str) -> str:
         raise ValueError(f"Git operation timed out: {arguments[0]}") from error
     if result.returncode:
         raise ValueError(result.stderr.strip() or "Git operation failed")
-    return result.stdout.strip()
+    # NUL-delimited filenames may legitimately start/end in whitespace.
+    return result.stdout if "-z" in arguments else result.stdout.strip()
 
 
 def repository_root(path: Path) -> Path:

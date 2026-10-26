@@ -138,5 +138,7 @@ async def execute_role(
             return ProviderResult(status="error", error_kind="role_mutation", summary=mutation)
         raise
     if mutation := await asyncio.to_thread(_mutation, *arguments):
-        return ProviderResult(status="error", error_kind="role_mutation", summary=mutation)
+        return result.model_copy(
+            update={"status": "error", "error_kind": "role_mutation", "summary": mutation}
+        )
     return result

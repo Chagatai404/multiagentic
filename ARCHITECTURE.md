@@ -1,7 +1,7 @@
-# Architecture (M0 through M4)
+# Architecture (M0 through M5)
 
 Dependency direction: CLI → engine shell → subsystem contracts and adapters. The
-functional core is `core/models.py`, `core/policy.py` and `core/workflow.py`: Pydantic
+functional core is `core/models.py`, `core/policy.py`, `core/accounting.py` and `core/workflow.py`: Pydantic
 contracts, legal transitions, and evidence-based completion. `core/engine.py` is
 explicitly the imperative orchestration shell; it injects a Provider and Store.
 Models/policy import no provider, subprocess, filesystem execution, or storage code.
@@ -68,8 +68,9 @@ before invoking the provider. A crash or timeout at that point has an unknown ou
 resume refuses replay and requires explicit `--verify-only` after inspection.
 `implemented` can rerun deterministic verification. `planned`, `verified` and
 `reviewed` preserve role progress. Verify-only never calls a model and retains due
-planning/review, pausing until explicit continuation can run them. Invocation schema
-v2 records each unique invocation, role, status and result within an execution,
+planning/review, pausing until explicit continuation can run them. Migration 4 adds
+requested-model metadata to per-invocation role, status and result within an
+execution,
 migrating historical rows. Pending role/identity is durable before each call;
 successful handoff and checkpoint are committed with its result. A crash after
 worktree creation but before its checkpoint leaves an orphan, detected conservatively
@@ -162,3 +163,39 @@ The M2 portability matrix uses both adapters against Python and Node disposable 
 repositories, real subprocess edits and checks, and deterministic protocol emulators.
 Development may use multiple agents; the product scheduler remains sequential until
 M6.
+
+## M5 resource and capture boundaries
+
+`core/accounting.py` is pure: persisted invocation records produce native-field
+coverage, provider/model/role groups and separate reported/client/pricing estimates.
+Unknown values remain null, including old invocations without model metadata.
+Model metadata records the requested/selected model, not a provider-confirmed actual
+model; provider-default actual model identity remains unknown.
+User-supplied pricing rules declare version, label and inclusive/exclusive input
+semantics; they are not account-spend measurements. The engine checks optional
+reported input/output/cost thresholds before each new role call across all executions.
+Unknown coverage pauses conservatively; the first call has no prior coverage to
+check. Extensions or explicit clearing are saved before continuation. In-flight usage
+cannot be hard-capped, and unknown provider outcomes still require inspection and
+verify-only acknowledgement. Explicit task model selection precedes role_models.
+
+`execution/capture.py` redacts incrementally before disk persistence, including
+known-secret chunk overlaps. JSON numeric counters retain numeric protocol syntax.
+Provider/check artifacts stream fully to disk; excerpts are bounded at 2 MB, summaries
+at 64,000 characters, and parser buffers at 8,000,000 characters per Codex record or
+Claude result. Oversized protocol input fails explicitly. Capture metadata records
+byte counts, excerpt truncation, process reason and completeness; sink errors fail
+explicitly while process cleanup and pipe draining remain required. Redaction is
+pattern/known-secret based, not a general secret scanner; no raw temporary spool is
+part of the capture path. Failure evidence seeks to at most the last 20,000 bytes
+of a log before decoding and selecting its final 5,000 characters, so full disk
+artifacts do not cause unbounded log reads for debugger context.
+
+`context/cache.py` stores decoded static references in memory behind bounded-byte
+content hashes. Current bytes and context policy determine reuse; objectives, role
+handoffs and diffs are rebuilt. Engine constructor opt-in defaults to false; no CLI
+cache switch is exposed. Windows fixture measurements found hashing/reuse slower
+than uncached construction. Context and role elapsed events measure orchestration,
+not an inferred startup/inference split. `eng.benchmark` runs independent scripted
+A/B/C fixture workflows and reports raw observations with unknown token/cost fields;
+it cannot establish live-model cost or quality improvements.

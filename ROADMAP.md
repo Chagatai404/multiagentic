@@ -17,10 +17,16 @@
   and Codex, normalized trigger envelopes, idempotency keys, deduplication, reentrancy
   guards, read-only bypass and detached runners, tested with emulated client input.
   Live hook firing inside real clients is not validated; Git/CI triggers move to M6.
-- **M5:** complete stream-to-disk artifacts, provider usage aggregation, pricing estimates
-  separated from measured spend, finer budgets, cache invalidation and reproducible A/B/C
-  benchmarks for verified success, latency, cost, retries and human intervention.
+- **M5 - verified offline:** streaming redacted artifacts with bounded
+  parsing/excerpts and completeness metadata; all-role native usage coverage, manual
+  pricing estimates, role models and reported-usage stops before new calls. Opt-in
+  content-hash caching defaults off (slower on the measured Windows fixture).
+  Repeated scripted A/B/C results are preserved; no live-model cost/quality claim.
 - **M6:** dependency scheduling, ownership, max-three concurrency, independent worktrees,
-  safe integration and approvals, CI triggers, more providers and optional MCP.
+  safe integration and approvals, Git/CI triggers, more providers and optional MCP.
 
 Later milestones must not weaken completion or recovery guarantees to improve speed.
+
+Provider tool/turn usage and hard in-flight spend caps remain unsupported. Successful
+live model editing, live-client hook firing and POSIX runtime behavior are not
+established by Windows offline verification.
