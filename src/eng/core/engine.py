@@ -10,7 +10,9 @@ from eng.context.cache import ContextCache
 from eng.context.packet import build_packet
 from eng.core.accounting import budget_stop_reason
 from eng.core.models import (
+    Budgets,
     ClassificationOverrides,
+    InvocationTelemetry,
     ProviderRequest,
     ProviderResult,
     RepairAttempt,
@@ -39,7 +41,7 @@ from eng.execution.workspace import (
     task_lock,
 )
 from eng.providers.base import Provider
-from eng.storage.store import Store
+from eng.storage.store import PlanBudgetStop, Store
 from eng.verification.runner import run_checks
 
 ROLE_STATES = {
@@ -361,6 +363,31 @@ class Engine:
                         self._transition(task, State.PAUSED, stop_reason)
                         break
                     role = task.next_role
+                    role_records = [r for r in self.store.invocations(task.id) if r.role == role]
+                    allocation = task.spec.budgets.role_limits.get(role)
+                    if allocation is not None:
+                        if (
+                            allocation.model_calls is not None
+                            and len(role_records) >= allocation.model_calls
+                        ):
+                            self._transition(
+                                task,
+                                State.PAUSED,
+                                f"Role {role.value} CLI invocation allocation exhausted; "
+                                "extend explicitly",
+                            )
+                            break
+                        role_budgets = Budgets.model_validate(
+                            allocation.model_dump(exclude_none=True)
+                        )
+                        if stop_reason := budget_stop_reason(role_records, role_budgets):
+                            self._transition(
+                                task, State.PAUSED, f"Role {role.value}: {stop_reason}"
+                            )
+                            break
+                    if stop_reason := self.store.plan_budget_stop_reason(task.id):
+                        self._transition(task, State.PAUSED, f"Plan: {stop_reason}")
+                        break
                     if role == Role.DEBUGGER and not task.repairs:
                         raise ValueError("Debugger requires a persisted repair attempt")
                     self._validate_workspace(task)
@@ -439,13 +466,15 @@ class Engine:
     ) -> bool:
         context_started = time.monotonic()
         prompt = build_packet(task, role, evidence=evidence, cache=context_cache)
+        context_duration = time.monotonic() - context_started
         self.store.event(
             task,
             "context",
             {
                 "role": role.value,
                 "chars": len(prompt),
-                "duration_seconds": time.monotonic() - context_started,
+                "utf8_bytes": len(prompt.encode("utf-8")),
+                "duration_seconds": context_duration,
                 "cache_enabled": context_cache is not None,
                 "cache": context_cache.snapshot() if context_cache is not None else None,
             },
@@ -458,6 +487,7 @@ class Engine:
             )
             return False
         self._transition(task, ROLE_STATES[role])
+        before_reservation = task.model_copy(deep=True)
         invocation_id = identity()
         # The old single-engineer artifact paths remain stable for consumers.
         artifacts = (
@@ -476,7 +506,24 @@ class Engine:
         task.review_digest = None
         if role in {Role.ENGINEER, Role.DEBUGGER}:
             task.verified_digest = None
-        self.store.begin_invocation(task)
+        try:
+            self.store.begin_invocation(task)
+        except PlanBudgetStop as error:
+            # No side effect was reserved. Restore the pre-call checkpoint/counters
+            # before pausing; this must never create a false unknown provider outcome.
+            for field in (
+                "provider_calls",
+                "checkpoint",
+                "pending_role",
+                "pending_invocation_id",
+                "pending_model",
+                "review_passed",
+                "review_digest",
+                "verified_digest",
+            ):
+                setattr(task, field, getattr(before_reservation, field))
+            self._transition(task, State.PAUSED, f"Plan: {error}")
+            return False
         assert task.workspace is not None and task.execution_id is not None
         role_started = time.monotonic()
         result: ProviderResult | None = None
@@ -497,13 +544,19 @@ class Engine:
                 cancelled,
             )
         finally:
+            role_duration = time.monotonic() - role_started
+            if result is not None:
+                if result.telemetry is None:
+                    result.telemetry = InvocationTelemetry()
+                result.telemetry.context_duration_seconds = context_duration
+                result.telemetry.role_duration_seconds = role_duration
             self.store.event(
                 task,
                 "role_elapsed",
                 {
                     "invocation_id": invocation_id,
                     "role": role.value,
-                    "duration_seconds": time.monotonic() - role_started,
+                    "duration_seconds": role_duration,
                     "provider_duration_seconds": result.duration_seconds if result else None,
                     "timing_scope": "role setup, provider execution and mutation detection",
                 },

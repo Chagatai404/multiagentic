@@ -192,8 +192,14 @@ M6.
 `core/accounting.py` is pure: persisted invocation records produce native-field
 coverage, provider/model/role groups and separate reported/client/pricing estimates.
 Unknown values remain null, including old invocations without model metadata.
-Model metadata records the requested/selected model, not a provider-confirmed actual
-model; provider-default actual model identity remains unknown.
+Invocation model metadata records the requested/selected model. Optional result
+`actual_model` is reserved for explicit provider evidence; current built-in adapters
+leave it unknown. E0 schema 2 adds optional result telemetry in existing JSON, keeping
+legacy history readable without inventing historical packet sizes. The role runtime
+measures the final adapter request after read-only path rewriting; engine timing
+enrichment measures context construction and role setup/execution/mutation detection.
+Adapter execute entry is not proof a CLI session launched. Reports preserve native
+counter coverage, cost sources and unavailable account/turn/acceptance measurements.
 User-supplied pricing rules declare version, label and inclusive/exclusive input
 semantics; they are not account-spend measurements. The engine checks optional
 reported input/output/cost thresholds before each new role call across all executions.
@@ -247,7 +253,15 @@ user-initiated and not counted). Only the coordinator thread writes the plan rec
 the integration branch. Crash recovery: nodes left RUNNING are resumed through the
 engine's existing checkpoint rules, COMPLETED-but-unintegrated nodes are integrated, and
 `reconcile` resets the eng-owned integration worktree to the last recorded verified head.
-Plan-wide reported-usage limits reuse `budget_stop_reason` across all node invocations.
+E1 partial plan/node overrides resolve and persist effective budgets and repair
+ceilings at creation. Role allocations cannot increase overall task allowances.
+New plans default to one worker, retaining the explicit max-three capability.
+Plan-wide reported limits serialize node launches using durable SQLite reservations
+and recheck aggregate invocation coverage before each role side effect; unknown
+outcomes block subsequent work. No token/cost reservation estimate is invented and
+in-flight overshoot remains possible. Provider-free `plan preview` applies pure
+classification/budget resolution and labels role projections hypothetical.
+See `docs/efficiency/` for schema and recovery boundaries. E2–E5 are deferred.
 
 **Integration** (`execution/integrate.py`, `scheduling/integration.py`). A completed
 node's worktree is captured as a commit object through a temporary index (the worktree is

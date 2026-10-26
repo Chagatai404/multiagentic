@@ -10,24 +10,28 @@ import yaml
 from pydantic import BaseModel, ValidationError
 
 from eng import __version__
-from eng.core.accounting import decimal_cost_total, usage_report
+from eng.core.accounting import budget_stop_reason, decimal_cost_total, usage_report
 from eng.core.engine import Engine
 from eng.core.models import (
+    Budgets,
     ClassificationOverrides,
     CommandProviderConfig,
     Complexity,
+    InvocationRecord,
     ProjectConfig,
     Risk,
+    Role,
     State,
     Task,
     TaskSpec,
     TaskType,
     now,
 )
-from eng.core.plan import PlanSpec, PlanStatus, topological_order
+from eng.core.plan import PlanSpec, PlanStatus, resolve_budgets, topological_order
 from eng.core.policy import TERMINAL
 from eng.core.refs import CIConclusion, CIEvent, ci_bypass, ci_description, ci_idempotency
 from eng.core.triggers import TriggerEnvelope, TriggerMode, TriggerOrigin
+from eng.core.workflow import classify_task, escalate_classification, select_workflow
 from eng.execution.process import redact, redact_data
 from eng.execution.workspace import repository_root, task_lock
 from eng.integrations import gitinstall
@@ -263,9 +267,28 @@ def continue_task(
     extend_output_tokens: int = 0,
     extend_cost_usd: float = 0,
     clear_reported_limits: bool = False,
+    *,
+    extend_role_model_calls: list[str] | None = None,
+    clear_role_limits: list[str] | None = None,
 ) -> None:
     store = None
     try:
+        role_extensions: dict[Role, int] = {}
+        for item in extend_role_model_calls or []:
+            name, separator, count = item.partition("=")
+            if not separator or not count.isascii() or not count.isdecimal():
+                raise ValueError("Role call extension must be ROLE=N with a positive integer")
+            role = Role(name)
+            if role == Role.VERIFIER or role in role_extensions or not 1 <= int(count) <= 99:
+                raise ValueError("Role extensions require a unique model role and 1-99 calls")
+            role_extensions[role] = int(count)
+        cleared_roles = [Role(name) for name in clear_role_limits or []]
+        if (
+            Role.VERIFIER in cleared_roles
+            or len(cleared_roles) != len(set(cleared_roles))
+            or set(cleared_roles) & role_extensions.keys()
+        ):
+            raise ValueError("Clear unique model roles; cannot extend and clear the same role")
         root = repository_root(project)
         store = Store(root)
         if (
@@ -276,6 +299,8 @@ def continue_task(
             or extend_output_tokens
             or extend_cost_usd
             or clear_reported_limits
+            or role_extensions
+            or cleared_roles
         ):
             with task_lock(root, task_id):
                 task = store.load(task_id)
@@ -285,12 +310,14 @@ def continue_task(
                     extend_input_tokens or extend_output_tokens or extend_cost_usd
                 ):
                     raise ValueError("Clear reported limits and extensions are mutually exclusive")
+                # Validate the entire proposed budget before saving any change or audit event.
+                budgets = task.spec.budgets.model_copy(deep=True)
                 for field, extension in (
                     ("reported_input_tokens", extend_input_tokens),
                     ("reported_output_tokens", extend_output_tokens),
                     ("reported_cost_usd", extend_cost_usd),
                 ):
-                    current = getattr(task.spec.budgets, field)
+                    current = getattr(budgets, field)
                     if extension:
                         if current is None:
                             raise ValueError(f"Cannot extend an unset {field} limit")
@@ -299,11 +326,26 @@ def continue_task(
                             if field == "reported_cost_usd"
                             else current + extension
                         )
-                        setattr(task.spec.budgets, field, total)
+                        setattr(budgets, field, total)
                     if clear_reported_limits:
-                        setattr(task.spec.budgets, field, None)
-                task.spec.budgets.wall_seconds += extend_seconds
-                task.spec.budgets.model_calls += extend_model_calls
+                        setattr(budgets, field, None)
+                budgets.wall_seconds += extend_seconds
+                budgets.model_calls += extend_model_calls
+                for role in cleared_roles:
+                    if role not in budgets.role_limits:
+                        raise ValueError(f"Cannot clear unset limits for {role.value}")
+                    del budgets.role_limits[role]
+                for role, extension in role_extensions.items():
+                    allocation = budgets.role_limits.get(role)
+                    if allocation is None or allocation.model_calls is None:
+                        raise ValueError(f"Cannot extend an unset {role.value} call limit")
+                    if allocation.model_calls + extension > budgets.model_calls:
+                        raise ValueError(
+                            "Role calls cannot exceed the overall task call limit; "
+                            "extend the overall budget explicitly if needed"
+                        )
+                    allocation.model_calls += extension
+                task.spec.budgets = Budgets.model_validate(budgets.model_dump())
                 if approve_high_risk:
                     task.spec.human_approved = True
                     store.event(task, "human_approved", {"source": "explicit_cli"})
@@ -318,6 +360,11 @@ def continue_task(
                         "output_tokens": extend_output_tokens,
                         "cost_usd": extend_cost_usd,
                         "reported_limits_cleared": clear_reported_limits,
+                        "role_model_calls": {
+                            role.value: count for role, count in role_extensions.items()
+                        },
+                        "role_limits_cleared": [role.value for role in cleared_roles],
+                        "source": "explicit_cli",
                     },
                 )
         task = store.load(task_id)
@@ -357,6 +404,14 @@ def resume(
         bool,
         typer.Option(help="Explicitly remove reported limits, including unknown-coverage stops"),
     ] = False,
+    extend_role_model_calls: Annotated[
+        list[str] | None,
+        typer.Option(help="Repeat ROLE=N to explicitly add calls to an existing role allocation"),
+    ] = None,
+    clear_role_limits: Annotated[
+        list[str] | None,
+        typer.Option(help="Repeat ROLE to explicitly remove its sublimits; overall limits remain"),
+    ] = None,
 ) -> None:
     """Continue a safe checkpoint; uncertain provider work requires --verify-only."""
     continue_task(
@@ -370,6 +425,8 @@ def resume(
         extend_output_tokens,
         extend_cost_usd,
         clear_reported_limits,
+        extend_role_model_calls=extend_role_model_calls,
+        clear_role_limits=clear_role_limits,
     )
 
 
@@ -380,8 +437,17 @@ def usage(task_id: str, project: Project = Path(".")) -> None:
     try:
         store = Store(repository_root(project))
         task = store.load(task_id)
-        report = usage_report(store.invocations(task_id), task.config.pricing)
-        emit({"task_id": task_id, **report.model_dump(mode="json")})
+        records = store.invocations(task_id)
+        report = usage_report(
+            records, task.config.pricing, tasks=[task], checks=store.verification_results(task_id)
+        )
+        emit(
+            {
+                "task_id": task_id,
+                **report.model_dump(mode="json"),
+                "budget_status": task_budget_status(task, records),
+            }
+        )
     except (ValueError, OSError) as error:
         fail(error)
     finally:
@@ -389,17 +455,82 @@ def usage(task_id: str, project: Project = Path(".")) -> None:
             store.close()
 
 
+def task_budget_status(task: Task, records: list[InvocationRecord]) -> dict[str, object]:
+    """Configured remaining allowance; no prediction of account credits or future usage."""
+    budgets = task.spec.budgets
+    totals = usage_report(records).totals
+    remaining: dict[str, int | float | None] = {
+        "model_calls": max(0, budgets.model_calls - task.provider_calls),
+        "active_wall_seconds": max(0, budgets.wall_seconds - task.elapsed_seconds),
+    }
+    anomalies = []
+    for name in ("input_tokens", "output_tokens", "cost_usd"):
+        limit = getattr(budgets, "reported_" + name)
+        coverage = totals["reported_cost_usd" if name == "cost_usd" else name]
+        value = coverage.known_subtotal
+        remaining["reported_" + name] = (
+            limit
+            if not records
+            else max(0, limit - value)
+            if limit is not None and value is not None and not coverage.missing
+            else None
+        )
+        if limit is not None and value is not None and value > limit:
+            anomalies.append("Known reported " + name + " exceeds configured threshold")
+    role_status = {}
+    for role, limits in budgets.role_limits.items():
+        rows = [record for record in records if record.role == role]
+        role_status[role.value] = {
+            "limits": limits.model_dump(mode="json"),
+            "invocations": len(rows),
+            "remaining_model_calls": (
+                max(0, limits.model_calls - len(rows)) if limits.model_calls is not None else None
+            ),
+            "reported_stop_reason": budget_stop_reason(
+                rows,
+                Budgets(
+                    reported_input_tokens=limits.reported_input_tokens,
+                    reported_output_tokens=limits.reported_output_tokens,
+                    reported_cost_usd=limits.reported_cost_usd,
+                ),
+            ),
+        }
+    return {
+        "effective_budgets": budgets.model_dump(mode="json"),
+        "remaining_configured_allowance": remaining,
+        "reported_stop_reason": budget_stop_reason(records, budgets),
+        "pause_reason": task.message if task.state in {State.PAUSED, State.BLOCKED} else None,
+        "roles": role_status,
+        "anomalies": anomalies,
+        "semantics": "Configured allowance only; future usage and account credits unavailable. "
+        "Reported limits stop new calls; in-flight calls may exceed them.",
+    }
+
+
 @app.command()
 def benchmark(
     repetitions: Annotated[int, typer.Option(min=1, max=10)] = 1,
     seed: Annotated[int, typer.Option(min=0, max=4294967295)] = 0,
     scenario: Annotated[list[str] | None, typer.Option(help="Repeatable scenario name")] = None,
+    efficiency: Annotated[
+        bool, typer.Option(help="Include offline risk, approval and quality control cases")
+    ] = False,
 ) -> None:
     """Run offline scripted fixtures; no paid models or real-model quality claims."""
     from eng.benchmark import run_benchmark
 
     try:
-        emit(run_benchmark(repetitions=repetitions, seed=seed, scenarios=scenario))
+        if efficiency:
+            emit(
+                run_benchmark(
+                    repetitions=repetitions,
+                    seed=seed,
+                    scenarios=scenario,
+                    include_efficiency_cases=True,
+                )
+            )
+        else:
+            emit(run_benchmark(repetitions=repetitions, seed=seed, scenarios=scenario))
     except (ValueError, OSError) as error:
         fail(error)
 
@@ -857,12 +988,18 @@ def plan_validate(file: Path) -> None:
 
 
 @plan_app.command("create")
-def plan_create(file: Path, project: Project = Path(".")) -> None:
+def plan_create(
+    file: Path,
+    project: Project = Path("."),
+    user_config: Annotated[
+        Path | None, typer.Option(exists=True, dir_okay=False, help="Optional user config YAML")
+    ] = None,
+) -> None:
     """Create a plan: eng-owned integration branch and worktree; no model runs yet."""
     store = None
     try:
         root = repository_root(project)
-        config = load_config(root)
+        config = load_config(root, user_config)
         store = Store(root)
         emit(plan_runner(root, config).create(store, load_plan_spec(file), config))
     except (ValueError, OSError, ValidationError, yaml.YAMLError) as error:
@@ -870,6 +1007,100 @@ def plan_create(file: Path, project: Project = Path(".")) -> None:
     finally:
         if store is not None:
             store.close()
+
+
+@plan_app.command("preview")
+def plan_preview(
+    file: Path,
+    project: Project = Path("."),
+    user_config: Annotated[
+        Path | None, typer.Option(exists=True, dir_okay=False, help="Optional user config YAML")
+    ] = None,
+) -> None:
+    """Preview hypothetical role calls and allocations without providers or runtime state."""
+    try:
+        spec = load_plan_spec(file)
+        try:
+            config_root = repository_root(project)
+        except ValueError:
+            config_root = project.resolve()  # Standalone configuration preview is supported.
+        config = load_config(config_root, user_config)
+        nodes = []
+        minimum_calls = 0
+        for node in spec.nodes:
+            budgets = resolve_budgets(config.budgets, spec.node_budgets, node.budgets)
+            max_repairs = (
+                node.max_repairs
+                if node.max_repairs is not None
+                else spec.node_max_repairs
+                if spec.node_max_repairs is not None
+                else config.workflow.max_repairs
+            )
+            task_spec = TaskSpec(
+                description=node.description + "\n\nOwnership: you may create or modify only "
+                "paths matching: "
+                + ", ".join(node.owns)
+                + ". Any change outside these paths fails the task.",
+                acceptance=node.acceptance,
+                context_paths=node.context_paths,
+                classification_overrides=ClassificationOverrides(risk=node.risk),
+            )
+            classification = classify_task(task_spec)
+            for offset in range(100, len(node.context_paths), 100):
+                classification = escalate_classification(
+                    classification,
+                    classify_task(
+                        task_spec.model_copy(
+                            update={
+                                "context_paths": node.context_paths[offset : offset + 100],
+                            }
+                        )
+                    ),
+                )
+            workflow = select_workflow(classification, config.workflow)
+            roles = []
+            if classification.task_type != TaskType.QUESTION:
+                roles = ([Role.PLANNER.value] if workflow.planner else []) + [Role.ENGINEER.value]
+                if workflow.reviewer:
+                    roles.append(Role.REVIEWER.value)
+            minimum_calls += len(roles)
+            nodes.append(
+                {
+                    "id": node.id,
+                    "effective_budgets": budgets.model_dump(mode="json"),
+                    "effective_max_repairs": max_repairs,
+                    "minimum_role_calls": len(roles),
+                    "roles": roles,
+                    "classification": classification.model_dump(mode="json"),
+                    "approval_required": workflow.approval_required,
+                    "provider": node.provider or spec.provider or config.provider,
+                    "selected_model": node.model,
+                    "role_models": {
+                        role: node.model or config.role_models.get(Role(role)) for role in roles
+                    },
+                    "budget_covers_minimum_calls": budgets.model_calls >= len(roles),
+                }
+            )
+        limited = any(value is not None for value in spec.limits.model_dump().values())
+        emit(
+            {
+                "hypothetical": True,
+                "name": spec.name,
+                "order": topological_order(spec),
+                "concurrency": spec.concurrency,
+                "effective_launch_concurrency": 1 if limited else spec.concurrency,
+                "limits": spec.limits.model_dump(mode="json"),
+                "nodes": nodes,
+                "minimum_role_calls": minimum_calls,
+                "predicted_tokens": None,
+                "predicted_cost_usd": None,
+                "semantics": "Hypothetical initial roles from scope, before changed-path "
+                "risk escalation, repair or repeated review. No provider availability "
+                "probe, execution, approval or account-credit estimate.",
+            }
+        )
+    except (ValueError, OSError, ValidationError, yaml.YAMLError) as error:
+        fail(error)
 
 
 def run_plan_command(
@@ -997,8 +1228,37 @@ def plan_usage(plan_id: str, project: Project = Path(".")) -> None:
         store = Store(root)
         plan = store.load_plan(plan_id)
         records = [r for n in plan.nodes if n.task_id for r in store.invocations(n.task_id)]
-        report = usage_report(records, load_config(root).pricing)
-        emit({"plan_id": plan_id, **report.model_dump(mode="json")})
+        tasks = [store.load(node.task_id) for node in plan.nodes if node.task_id]
+        checks = [result for task in tasks for result in store.verification_results(task.id)]
+        report = usage_report(records, load_config(root).pricing, tasks=tasks, checks=checks)
+        emit(
+            {
+                "plan_id": plan_id,
+                **report.model_dump(mode="json"),
+                "plan_limits": plan.spec.limits.model_dump(mode="json"),
+                "reported_stop_reason": budget_stop_reason(records, plan.spec.limits.as_budgets()),
+                "nodes": [
+                    {
+                        "id": node.spec.id,
+                        "status": node.status,
+                        "message": node.message,
+                        "effective_budgets": (
+                            node.effective_budgets.model_dump(mode="json")
+                            if node.effective_budgets
+                            else None
+                        ),
+                        "effective_max_repairs": node.effective_max_repairs,
+                    }
+                    for node in plan.nodes
+                ],
+                "task_budgets": {
+                    task.id: task_budget_status(
+                        task, [record for record in records if record.task_id == task.id]
+                    )
+                    for task in tasks
+                },
+            }
+        )
     except (ValueError, OSError) as error:
         fail(error)
     finally:

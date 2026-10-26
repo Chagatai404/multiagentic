@@ -114,6 +114,15 @@ class Usage(Contract):
     source: Literal["provider", "unknown"] = "unknown"
 
 
+class RoleLimits(Contract):
+    """Optional pre-next-call limits within the enclosing task's overall limits."""
+
+    model_calls: int | None = Field(default=None, ge=1, le=100)
+    reported_input_tokens: int | None = Field(default=None, gt=0)
+    reported_output_tokens: int | None = Field(default=None, gt=0)
+    reported_cost_usd: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+
+
 class Budgets(Contract):
     wall_seconds: float = Field(default=300, gt=0, le=86400)
     provider_seconds: float = Field(default=180, gt=0, le=86400)
@@ -122,6 +131,14 @@ class Budgets(Contract):
     reported_input_tokens: int | None = Field(default=None, gt=0)
     reported_output_tokens: int | None = Field(default=None, gt=0)
     reported_cost_usd: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    role_limits: dict[Role, RoleLimits] = Field(default_factory=dict)
+
+    @field_validator("role_limits")
+    @classmethod
+    def model_roles_only(cls, value: dict[Role, RoleLimits]) -> dict[Role, RoleLimits]:
+        if Role.VERIFIER in value:
+            raise ValueError("Verifier runs deterministic checks and has no model allocation")
+        return value
 
 
 class PricingRule(Contract):
@@ -141,6 +158,7 @@ class PricingRule(Contract):
 class InvocationRecord(Contract):
     invocation_id: str
     execution_id: str
+    task_id: str | None = None
     provider: str
     model: str | None = None
     role: Role
@@ -323,6 +341,16 @@ ProviderStatus = Literal["success", "error", "cancelled", "timeout"]
 Outcome = Literal["PASS", "FAIL", "SKIPPED", "UNAVAILABLE", "ERROR"]
 
 
+class InvocationTelemetry(Contract):
+    """Measured orchestration data, never a measure of hidden provider context."""
+
+    provider_invoked: bool = False
+    packet_chars: int | None = Field(default=None, ge=0)
+    packet_utf8_bytes: int | None = Field(default=None, ge=0)
+    context_duration_seconds: float | None = Field(default=None, ge=0)
+    role_duration_seconds: float | None = Field(default=None, ge=0)
+
+
 class ProviderResult(Contract):
     status: ProviderStatus
     summary: str = ""
@@ -330,6 +358,9 @@ class ProviderResult(Contract):
     usage: Usage = Field(default_factory=Usage)
     duration_seconds: float = Field(default=0, ge=0)
     session_id: str | None = None
+    # Set only from explicit provider evidence, never copied from requested model.
+    actual_model: str | None = Field(default=None, min_length=1, max_length=256)
+    telemetry: InvocationTelemetry | None = None
 
 
 class VerificationResult(Contract):

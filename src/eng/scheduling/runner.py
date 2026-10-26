@@ -17,6 +17,7 @@ from typing import IO
 from eng.core.accounting import budget_stop_reason
 from eng.core.engine import Engine
 from eng.core.models import (
+    Budgets,
     ClassificationOverrides,
     InvocationRecord,
     ProjectConfig,
@@ -36,6 +37,7 @@ from eng.core.plan import (
     derive_plan_status,
     node_status_for_task,
     ready_nodes,
+    resolve_budgets,
     skipped_nodes,
 )
 from eng.core.policy import TERMINAL
@@ -103,7 +105,23 @@ class PlanRunner:
             id=plan_id,
             project=self.root,
             spec=spec,
-            nodes=[PlanNode(spec=node) for node in spec.nodes],
+            budget_schema_version=2,
+            nodes=[
+                PlanNode(
+                    spec=node,
+                    effective_budgets=resolve_budgets(
+                        config.budgets, spec.node_budgets, node.budgets
+                    ),
+                    effective_max_repairs=(
+                        node.max_repairs
+                        if node.max_repairs is not None
+                        else spec.node_max_repairs
+                        if spec.node_max_repairs is not None
+                        else config.workflow.max_repairs
+                    ),
+                )
+                for node in spec.nodes
+            ],
             base_commit=base,
             branch=branch,
             workspace=workspace,
@@ -128,7 +146,28 @@ class PlanRunner:
         self, plan: PlanRecord, node: PlanNode, config: ProjectConfig, approve: bool
     ) -> Task:
         spec = plan.spec
-        budgets = (spec.node_budgets or config.budgets).model_copy(deep=True)
+        if node.effective_budgets is None:
+            if plan.budget_schema_version == 1 and spec.node_budgets is not None:
+                # Old saved plans serialized a full Budgets object. Its null
+                # reported thresholds deliberately replaced project thresholds.
+                node.effective_budgets = Budgets.model_validate(
+                    spec.node_budgets.model_dump(exclude_none=True)
+                )
+            else:
+                node.effective_budgets = resolve_budgets(
+                    config.budgets, spec.node_budgets, node.spec.budgets
+                )
+        if node.effective_max_repairs is None:
+            node.effective_max_repairs = (
+                node.spec.max_repairs
+                if node.spec.max_repairs is not None
+                else spec.node_max_repairs
+                if spec.node_max_repairs is not None
+                else config.workflow.max_repairs
+            )
+        budgets = node.effective_budgets.model_copy(deep=True)
+        config = config.model_copy(deep=True)
+        config.workflow.max_repairs = node.effective_max_repairs
         task_spec = TaskSpec(
             description=node_description(node),
             acceptance=node.spec.acceptance,
@@ -177,20 +216,36 @@ class PlanRunner:
         if plan.cancel_requested or plan.status == PlanStatus.CANCELLED:
             raise ValueError("Plan was cancelled; create a new plan")
         reconcile(store, plan)
+        plan.message = ""
         if clear_limits:
             # Explicit human action, like `resume --clear-reported-limits` for one task.
             plan.spec.limits = PlanLimits()
             plan.message = ""
             store.plan_event(plan.id, "limits_cleared", {"source": "explicit_cli"})
             store.save_plan(plan)
+            store.clear_plan_reservations(plan.id)
         config = load_config(self.root)
         pool = SlotPool(self.root, plan.spec.concurrency)
         futures: dict[Future[str], tuple[str, IO[bytes]]] = {}
         queue: list[str] = []
         for node in plan.nodes:
+            # A coordinator may die after node_finished/VERIFIED was persisted but
+            # before settling its launch lease (or after integration). Reconcile
+            # every membership, not only RUNNING nodes; settlement takes the task's
+            # nonblocking OS lock and leaves an active direct continuation alone.
+            if node.task_id:
+                store.settle_plan_launch(plan.id, node.spec.id)
             interrupted = node.status == NodeStatus.RUNNING  # a previous coordinator died
             if interrupted or (resume and node.status in {NodeStatus.PAUSED, NodeStatus.BLOCKED}):
-                queue.append(node.spec.id)
+                task = store.load(node.task_id) if node.task_id else None
+                if task is not None and task.state == State.COMPLETED:
+                    node.status = NodeStatus.VERIFIED
+                    store.settle_plan_launch(plan.id, node.spec.id)
+                elif task is not None and task.state in TERMINAL:
+                    node.status = node_status_for_task(task.state)
+                    store.settle_plan_launch(plan.id, node.spec.id)
+                else:
+                    queue.append(node.spec.id)
         store.plan_event(
             plan.id,
             "run_started",
@@ -220,12 +275,14 @@ class PlanRunner:
                         plan.id, "node_finished", {"node": node_id, "status": node.status.value}
                     )
                     store.save_plan(plan)
+                    store.settle_plan_launch(plan.id, node_id)
                 finally:
                     # Release only after the finish is recorded: the event log must never
                     # show more nodes in flight than slots that were really held.
                     pool.release(slot)
 
         def launch(node: PlanNode) -> bool:
+            nonlocal limit_reason
             slot = pool.acquire()
             if slot is None:
                 return False
@@ -234,18 +291,17 @@ class PlanRunner:
                 if node.task_id is None:
                     task = self._new_task(plan, node, config, approve)
                     node.base_commit = plan.head_commit
-                    store.create(task)
-                    node.task_id = task.id
                 else:
                     task = store.load(node.task_id)
                     resumed = task.state != State.CREATED
-                node.status = NodeStatus.RUNNING
-                node.message = ""
-                store.plan_event(
-                    plan.id, "node_started", {"node": node.spec.id, "task": node.task_id}
-                )
-                store.save_plan(plan)
-                futures[executor.submit(self._execute, node.task_id, resumed)] = (
+                if reason := store.claim_plan_launch(plan, node, task):
+                    pool.release(slot)
+                    if not futures:
+                        limit_reason = reason
+                        plan.message = reason
+                        store.plan_event(plan.id, "limit_reached", {"message": reason})
+                    return False
+                futures[executor.submit(self._execute, task.id, resumed)] = (
                     node.spec.id,
                     slot,
                 )
@@ -276,7 +332,7 @@ class PlanRunner:
                     store.save_plan(plan)
                 launched = False
                 starved = False  # work is ready but another plan holds every project slot
-                if not cancelling and limit_reason is None:
+                if not cancelling and limit_reason is None and not futures:
                     records: list[InvocationRecord] = [
                         record
                         for node in plan.nodes
@@ -289,6 +345,12 @@ class PlanRunner:
                         store.plan_event(plan.id, "limit_reached", {"message": limit_reason})
                 if not cancelling and limit_reason is None:
                     free = plan.spec.concurrency - len(futures)
+                    if futures and any(
+                        value is not None for value in plan.spec.limits.model_dump().values()
+                    ):
+                        # Admission is serialized without calibrated estimates. Do not
+                        # repeatedly contend for a lease while its owner is still running.
+                        free = 0
                     while queue and free > 0:
                         node = plan.node(queue[0])
                         task = store.load(node.task_id) if node.task_id else None
@@ -344,6 +406,13 @@ class PlanRunner:
                     node.status = NodeStatus.CANCELLED
                     node.message = node.message or "Plan cancelled"
         plan.status = derive_plan_status(list(plan.statuses().values()))
+        if limit_reason and plan.status not in {
+            PlanStatus.READY,
+            PlanStatus.FAILED,
+            PlanStatus.CANCELLED,
+            PlanStatus.BLOCKED,
+        }:
+            plan.status = PlanStatus.PAUSED
         plan.message = plan.message or _summary(plan)
         store.plan_event(plan.id, "run_finished", {"status": plan.status.value})
         store.save_plan(plan)

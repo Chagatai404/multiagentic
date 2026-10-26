@@ -7,7 +7,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from eng.agents.registry import get_role
-from eng.core.models import ProviderRequest, ProviderResult, Task
+from eng.core.models import InvocationTelemetry, ProviderRequest, ProviderResult, Task
 from eng.execution.workspace import git, protected_changes, safe_path
 from eng.providers.base import Provider
 
@@ -95,8 +95,22 @@ async def execute_role(
     definition = get_role(request.role)
     if definition.deterministic:
         raise ValueError("Verifier executes configured checks, never a provider")
+
+    measured_request: InvocationTelemetry | None = None
+
+    async def invoke(actual_request: ProviderRequest) -> ProviderResult:
+        nonlocal measured_request
+        measured_request = InvocationTelemetry(
+            provider_invoked=True,
+            packet_chars=len(actual_request.prompt),
+            packet_utf8_bytes=len(actual_request.prompt.encode("utf-8")),
+        )
+        result = await provider.execute(actual_request, artifact_dir, cancelled)
+        result.telemetry = measured_request
+        return result
+
     if not definition.read_only:
-        return await provider.execute(request, artifact_dir, cancelled)
+        return await invoke(request)
     if cancelled():
         return ProviderResult(status="cancelled", error_kind="cancelled")
     started = time.monotonic()
@@ -131,11 +145,16 @@ async def execute_role(
     )
     arguments = (original, snapshot, before, snapshot_before)
     try:
-        result = await provider.execute(isolated, artifact_dir, cancelled)
+        result = await invoke(isolated)
     except Exception:
         # A detected mutation outranks the provider failure: fail closed and record it.
         if mutation := await asyncio.to_thread(_mutation, *arguments):
-            return ProviderResult(status="error", error_kind="role_mutation", summary=mutation)
+            return ProviderResult(
+                status="error",
+                error_kind="role_mutation",
+                summary=mutation,
+                telemetry=measured_request,
+            )
         raise
     if mutation := await asyncio.to_thread(_mutation, *arguments):
         return result.model_copy(

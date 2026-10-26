@@ -1,5 +1,39 @@
 # Validation evidence — 2026-10-25
 
+## Efficiency E0/E1 working slice — 2026-10-26
+
+Implementation started after the small ADR and five unchanged-behavior baseline
+regressions passed; see `docs/efficiency/ADR-001.md`. E0 regression tests were written
+before implementation and first produced three expected pure failures. The sandbox's
+Git-backed fixture stalled and was stopped; the same offline tests subsequently ran
+with approved local subprocess access and disposable repositories.
+
+Focused E0 command:
+`python -m pytest tests/unit/test_efficiency_telemetry.py tests/unit/test_m5_accounting.py tests/integration/test_m5_resources.py tests/integration/test_adaptive_engine.py tests/contract/test_providers.py -q --basetemp .cache/pytest-e0-focused`
+passed **53 tests in 203.88 seconds**. Coverage includes result-JSON persistence,
+Unicode packet sizes after snapshot isolation, native missing-counter/cost handling,
+role routing, budget/recovery and risk/review safeguards. `ruff check` and strict
+`mypy` passed for the changed accounting/runtime/CLI sources. CLI regressions were
+also written first (two expected failures), then passed **3 tests** including a
+provider/store-free preview, benchmark flag routing and historical-check reporting.
+These focused counts overlap other suites and must not be summed as a full result.
+The final E0/CLI regression command
+`python -m pytest tests/unit/test_efficiency_cli.py tests/unit/test_efficiency_telemetry.py -q --basetemp .cache/pytest-e0-final-regressions`
+passed **9 tests in 1.95 seconds**, including nested-project preview resolution and
+the distinction between adapter entry, unknown process timing and unknown sessions.
+After independent review, explicit role recovery and caught mutation/exception
+telemetry regressions passed **24 tests in 81.95 seconds** with
+`python -m pytest tests/unit/test_efficiency_cli.py tests/unit/test_efficiency_telemetry.py -q --basetemp .cache/pytest-role-and-mutation-final`.
+This includes repeated reviewer recovery, known/unknown role thresholds, retained
+enclosing stops, invalid-input/approval persistence and adapter-entry evidence after
+an exception. Ruff and strict mypy pass for the affected CLI/runtime sources.
+
+This is intermediate focused evidence; full milestone tests/build and E1 concurrency
+validation must be recorded separately before handoff. No live providers, paid model
+calibration, external CI delivery, hook activation, push or promotion ran in this slice.
+Actual-model identity remains unknown in built-in adapters. Fake fixtures cannot
+establish real-model savings, successful live editing or escaped-defect rates in use.
+
 ## M1 original evidence
 
 Host: Windows, Python 3.14.4; installed Codex CLI 0.149.0. Dependencies were installed
@@ -407,3 +441,6 @@ Copilot and unknown skills-compatible clients use model-selected skill discovery
 an assertion of deterministic prompt interception. Gemini/Cursor hook integration does
 not add those products as engine model-provider adapters. Parallel DAG plans and human
 approval/promotion boundaries remain unchanged.
+
+E0/E1 efficiency milestone evidence, exact commands and remaining limitations are in
+[efficiency verification](efficiency/VERIFICATION.md).

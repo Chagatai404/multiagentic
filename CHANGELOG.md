@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased - efficiency E0/E1
+
+- Add usage report schema 2 with native totals/coverage, selected vs actual model
+  distinction, measured final packet sizes/timings, task/role outcomes and saved
+  check history. Preserve unknown account spend, credits, internal turns and human
+  acceptance; estimates retain separate provenance.
+- Add partial per-node budgets, role sublimits and persisted effective allocations;
+  default new plans to one worker while preserving explicit max-three concurrency.
+  Limited plans serialize launches, retain crash reservations and stop before new
+  roles when reported coverage is missing or exhausted; in-flight overshoot remains.
+- Add provider-free `eng plan preview`, optional plan user config, budget status and
+  `eng benchmark --efficiency` offline quality controls. Document calibration opt-in
+  and E2–E5 deferrals. No provider flags, dispatch defaults or paid tests changed.
+- Add audited, explicit role call extensions and targeted role-limit clearing on
+  resume, retaining enclosing task/plan caps and required review/approval gates.
+  Retain measured adapter-entry telemetry when a read-only role mutates then raises.
+
 ## Unreleased - user-wide installation and keyword triggers
 
 - Add `eng install` / `eng uninstall`, defaulting to user scope; preserve project scope

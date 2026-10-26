@@ -278,17 +278,31 @@ not OS sandboxes. The verifier is deterministic and makes no model call.
 
 ## Resource visibility
 
+See [accounting semantics](docs/efficiency/ACCOUNTING_AND_LIMITS.md),
+[budget examples](docs/efficiency/BUDGET_SCHEMA_AND_PRESETS.md),
+[benchmark/calibration protocol](docs/efficiency/BENCHMARKS.md) and
+[large-project runbook](docs/efficiency/LARGE_PROJECT_RUNBOOK.md). E0/E1 cover telemetry
+and configured budgets; [context/approved-plan reuse](docs/efficiency/CONTEXT_AND_PLAN_REUSE.md),
+automatic routing and preset flags remain future work. Offline fixtures do not
+demonstrate real-model cost or quality improvements.
+
 ```sh
 eng usage TASK_ID
 eng run 'Fix addition' --accept 'Addition returns the sum' --reported-input-tokens 10000 --reported-output-tokens 2000
 eng resume TASK_ID --extend-input-tokens 10000 --extend-output-tokens 2000
 eng resume TASK_ID --clear-reported-limits
 eng benchmark --repetitions 3 --seed 20261026
+eng benchmark --efficiency --repetitions 1 --seed 0
 ```
 
 `eng usage` aggregates all saved invocations across continuations by provider,
-requested/selected model and role. The selected model is the request metadata; when
-the provider chooses its default, the actual model remains unknown. Each native counter has a known subtotal, reported count and missing
+requested/selected model and role. Schema 2 adds measured packet character/UTF-8
+sizes, timing coverage, task/role outcomes, saved check history, missing telemetry and
+configured budget status. Human acceptance, measured account spend and subscription
+allowance remain unknown. The selected model is the request metadata; when
+the provider chooses its default, the actual model remains unknown. Built-in adapters
+currently leave actual-model identity unknown even with explicit selection. Each
+native counter has a known subtotal, reported count and missing
 count; all-missing subtotals stay null. Cache/reasoning counters are not added to
 input/output. Reported cost, client estimates and optional pricing estimates have
 separate provenance. Nothing here measures account spend.
@@ -356,10 +370,17 @@ See [docs/plan.example.yaml](docs/plan.example.yaml) and [the M6 design](docs/M6
 - **Failure policy.** No new nodes start after a node fails, pauses or blocks unless
   `--keep-going`; dependents of failed/cancelled nodes are SKIPPED. Unknown provider
   outcomes still need `eng resume NODE_TASK --verify-only` (see `eng plan status`).
-- **Budgets.** `node_budgets` applies per node task; `limits` are plan-wide reported-usage
-  stops checked before launching a node (unknown coverage stops conservatively;
+- **Budgets.** `node_budgets` provides partial plan defaults; each node's `budgets`
+  overrides individual fields. Optional `role_limits` remain subordinate to task limits.
+  Effective allocations are saved at creation. New plans default to concurrency 1;
+  explicit concurrency 2–3 remains supported. `limits` are plan-wide reported-usage
+  stops checked before node launches and role calls (unknown coverage stops conservatively;
   `eng plan resume --clear-limits` is the explicit override). `--approve-high-risk`
   approves every node task for that run; prefer per-node `eng plan approve`.
+  Plans with reported limits serialize launches because no defensible usage reservation
+  estimate is available. In-flight calls may exceed thresholds. Preview without models
+  or runtime state: `eng plan preview plan.yaml -p . --user-config user.yaml`;
+  use the same optional user file with `eng plan create`.
 - **Promotion** requires every node integrated, the last verification passing, an
   unmoved plan branch, a clean checkout on a named branch, and a pure fast-forward.
   eng never pushes, and there is no automatic cleanup: remove

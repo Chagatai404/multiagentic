@@ -15,6 +15,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from eng.context.cache import ContextCache
 from eng.context.packet import build_packet
 from eng.core.engine import Engine
@@ -29,8 +31,11 @@ from eng.core.models import (
     Task,
     TaskSpec,
 )
+from eng.core.plan import PlanSpec, PlanStatus
+from eng.core.workflow import classify_task
 from eng.execution.workspace import git, prepare, safe_path
 from eng.providers.fake import FakeProvider
+from eng.scheduling.runner import PlanRunner
 from eng.storage.store import Store
 
 SCENARIOS = (
@@ -42,6 +47,146 @@ SCENARIOS = (
     "architecture_violation",
 )
 ARMS = ("A_single_coding", "B_coding_checks", "C_adaptive")
+
+
+class _DisjointProvider(FakeProvider):
+    """Choose prewritten independent edits by the objective's fixed marker."""
+
+    async def execute(
+        self,
+        request: ProviderRequest,
+        artifact_dir: Path,
+        cancelled: Callable[[], bool],
+    ) -> ProviderResult:
+        name = "left" if "FIXTURE:left" in request.prompt else "right"
+        return await FakeProvider({f"{name}/value.txt": name.upper()}).execute(
+            request, artifact_dir, cancelled
+        )
+
+
+def _control_cases(parent: Path, repetition: int) -> list[dict[str, Any]]:
+    """Additional production safety/plan controls, separate from comparative A/B/C arms."""
+    root = parent / "controls"
+    root.mkdir()
+    git(root, "init", "-b", "main")
+    check = (
+        "from pathlib import Path; "
+        "assert all(not Path(n+'/value.txt').exists() or "
+        "Path(n+'/value.txt').read_text()==n.upper() for n in ('left','right'))"
+    )
+    config = ProjectConfig(
+        name="offline-control",
+        provider="fake",
+        instructions=[],
+        checks=[Check(name="values", argv=[sys.executable, "-c", check], confirmed=True)],
+    )
+    _write(
+        root,
+        {
+            ".gitignore": ".engineering/\n__pycache__/\n",
+            # Runtime state/configuration stays ignored in the source checkout.
+            "seed.txt": "unchanged source checkout\n",
+        },
+    )
+    configuration = root / ".engineering" / "project.yaml"
+    configuration.parent.mkdir()
+    configuration.write_text(yaml.safe_dump(config.model_dump(mode="json")), encoding="utf-8")
+    git(root, "add", ".")
+    git(
+        root,
+        "-c",
+        "user.name=Benchmark",
+        "-c",
+        "user.email=offline@example.invalid",
+        "commit",
+        "-m",
+        "offline controls",
+    )
+    base = git(root, "rev-parse", "HEAD")
+    store = Store(root)
+    try:
+        risky = Task(
+            id="approval-control",
+            project=root,
+            config=config,
+            spec=TaskSpec(
+                description="Fix security permissions", acceptance=["Pass checks"], provider="fake"
+            ),
+        )
+        store.create(risky)
+        started = time.perf_counter()
+        blocked = asyncio.run(Engine(store, FakeProvider()).execute(risky.id))
+        approval = {
+            "scenario": "high_risk_approval",
+            "repetition": repetition,
+            "state": blocked.state.value,
+            "provider_calls": blocked.provider_calls,
+            "declared_success": blocked.state == State.COMPLETED,
+            "gate_preserved": (
+                blocked.state == State.PAUSED
+                and blocked.provider_calls == 0
+                and blocked.workflow is not None
+                and blocked.workflow.approval_required
+                and not blocked.spec.human_approved
+            ),
+            "elapsed_seconds": time.perf_counter() - started,
+            "input_tokens": None,
+            "output_tokens": None,
+            "cost_usd": None,
+        }
+        spec = PlanSpec.model_validate(
+            {
+                "name": "disjoint fixture",
+                "concurrency": 2,
+                "provider": "fake",
+                "nodes": [
+                    {
+                        "id": name,
+                        "description": f"FIXTURE:{name} create numeric value file",
+                        "acceptance": ["The owned file contains its uppercase name"],
+                        "owns": [f"{name}/**"],
+                    }
+                    for name in ("left", "right")
+                ],
+            }
+        )
+        runner = PlanRunner(root, lambda name, project: _DisjointProvider(), poll_seconds=0.02)
+        plan = runner.create(store, spec, config)
+        started = time.perf_counter()
+        plan = runner.run(plan.id)
+        elapsed = time.perf_counter() - started
+        assert plan.workspace is not None
+        passed = plan.final_verified and all(
+            (plan.workspace / name / "value.txt").exists()
+            and (plan.workspace / name / "value.txt").read_text() == name.upper()
+            for name in ("left", "right")
+        )
+        unchanged = git(root, "rev-parse", "HEAD") == base and not git(
+            root, "status", "--porcelain", "--untracked-files=normal"
+        )
+        if not unchanged:
+            raise ValueError("Control benchmark mutated source checkout")
+        disjoint = {
+            "scenario": "disjoint_cross_module_plan",
+            "repetition": repetition,
+            "state": plan.status.value,
+            "node_statuses": [node.status.value for node in plan.nodes],
+            "concurrency_configured": spec.concurrency,
+            "provider_calls": sum(
+                store.load(node.task_id).provider_calls for node in plan.nodes if node.task_id
+            ),
+            "verified_success": passed,
+            "declared_success": plan.status == PlanStatus.READY,
+            "promoted": plan.status == PlanStatus.PROMOTED,
+            "source_unchanged": unchanged,
+            "elapsed_seconds": elapsed,
+            "input_tokens": None,
+            "output_tokens": None,
+            "cost_usd": None,
+        }
+        return [approval, disjoint]
+    finally:
+        store.close()
 
 
 @dataclass(frozen=True)
@@ -60,7 +205,7 @@ def _fixture(scenario: str, seed: int) -> Fixture:
     evaluator = f"from calc import answer\nassert answer() == {value}\n"
     descriptions = {
         "small_bug": "Fix the small arithmetic bug",
-        "medium_feature": "Implement bounded numeric feature",
+        "medium_feature": "Implement bounded numeric integration feature",
         "large_refactor": "Refactor architecture across twelve modules",
         "failing_tests": "Repair the failing numeric tests",
         "cross_module_integration": "Implement cross-module integration",
@@ -221,6 +366,7 @@ def _row(parent: Path, scenario: str, repetition: int, seed: int, arm: str) -> d
         ),
     )
     provider = _ScriptedProvider(fixture)
+    classification = classify_task(task.spec)
     started = time.perf_counter()
     first_pass = False
     repairs = 0
@@ -270,6 +416,8 @@ def _row(parent: Path, scenario: str, repetition: int, seed: int, arm: str) -> d
         raise ValueError("Benchmark mutated source checkout or external acceptance")
     return dict(
         scenario=scenario,
+        initial_complexity=classification.complexity.value,
+        initial_risk=classification.risk.value,
         repetition=repetition,
         seed=seed,
         arm=arm,
@@ -360,6 +508,7 @@ def run_benchmark(
     repetitions: int = 1,
     seed: int = 0,
     scenarios: list[str] | None = None,
+    include_efficiency_cases: bool = False,
 ) -> dict[str, Any]:
     """Run six bounded, seeded fixture categories against identical external acceptance.
 
@@ -367,6 +516,8 @@ def run_benchmark(
     paths. C invokes the unchanged production Engine safeguards. Temporary repositories
     are disposable and never use the caller's checkout as their source.
     """
+    if not isinstance(include_efficiency_cases, bool):
+        raise ValueError("include_efficiency_cases must be a boolean")
     if (
         isinstance(repetitions, bool)
         or not isinstance(repetitions, int)
@@ -392,6 +543,7 @@ def run_benchmark(
     ]
     random.Random(seed).shuffle(order)
     rows = []
+    controls = []
     # A short temp root avoids deep role-snapshot Git object paths on Windows.
     with tempfile.TemporaryDirectory(prefix="eb-") as temporary:
         parent = Path(temporary).resolve()
@@ -400,6 +552,11 @@ def run_benchmark(
                 directory = parent / str(index)
                 directory.mkdir()
                 rows.append(_row(directory, scenario, repetition, seed + repetition, arm))
+            if include_efficiency_cases:
+                for repetition in range(repetitions):
+                    directory = parent / f"control-{repetition}"
+                    directory.mkdir()
+                    controls.extend(_control_cases(directory, repetition))
             micro = parent / "micro"
             micro.mkdir()
             git(micro, "init", "-b", "main")
@@ -427,7 +584,7 @@ def run_benchmark(
             )
             context = context_microbenchmark(task)
     return {
-        "schema_version": 1,
+        "schema_version": 2 if include_efficiency_cases else 1,
         "fixture_kind": "deterministic_scripted_edits",
         "limitations": [
             "Scripted fixture edits do not measure model intelligence or real-model quality.",
@@ -441,6 +598,7 @@ def run_benchmark(
         "repetitions": repetitions,
         "scenarios": selected,
         "raw": rows,
+        **({"control_cases": controls} if include_efficiency_cases else {}),
         "summary": {arm: _summary([row for row in rows if row["arm"] == arm]) for arm in ARMS},
         "context_microbenchmark": context,
     }

@@ -128,6 +128,7 @@ def test_independent_nodes_run_concurrently_and_integrate(plan_repo: Path) -> No
         node("b", ["files/b.txt"]),
         node("c", ["files/c.txt"]),
         node("d", ["files/d.txt"], ["a"]),
+        concurrency=3,
     )
     _, store, plan = run_plan(plan_repo, spec, provider)
     assert plan.status == PlanStatus.READY, plan.message
@@ -448,7 +449,7 @@ def test_large_plan_never_exceeds_three_and_integrates_everything(plan_repo: Pat
         node("t3", ["files/t3.txt"], ["n9", "t2"]),
     ]
     provider = NodeProvider(edits, tracker, delay=0.15)
-    _, store, plan = run_plan(plan_repo, spec_of(*nodes), provider)
+    _, store, plan = run_plan(plan_repo, spec_of(*nodes, concurrency=3), provider)
     assert plan.status == PlanStatus.READY, plan.message
     assert node_concurrency(store, plan.id) == 3  # saturated at the cap, never above it
     assert tracker.peak <= 3
@@ -465,9 +466,13 @@ def test_two_plans_share_the_project_wide_slot_cap(plan_repo: Path) -> None:
     provider = NodeProvider({n: file_edit(n) for n in names}, tracker, delay=0.4)
     runner = make_runner(plan_repo, provider)
     store = Store(plan_repo)
-    first = runner.create(store, spec_of(*[node(n, [f"files/{n}.txt"]) for n in names[:3]]))
+    first = runner.create(
+        store, spec_of(*[node(n, [f"files/{n}.txt"]) for n in names[:3]], concurrency=3)
+    )
     second_runner = make_runner(plan_repo, provider)
-    second = second_runner.create(store, spec_of(*[node(n, [f"files/{n}.txt"]) for n in names[3:]]))
+    second = second_runner.create(
+        store, spec_of(*[node(n, [f"files/{n}.txt"]) for n in names[3:]], concurrency=3)
+    )
     results: dict[str, PlanRecord] = {}
     threads = [
         threading.Thread(target=lambda r=r, p=p: results.__setitem__(p.id, r.run(p.id)))

@@ -98,7 +98,8 @@ def test_valid_plan_orders_and_ancestors() -> None:
     )
     assert ancestors(spec)["c"] == {"a", "b"}
     assert topological_order(spec) == ["a", "b", "c"]
-    assert spec.concurrency == MAX_CONCURRENCY
+    assert spec.concurrency == 1
+    assert MAX_CONCURRENCY == 3
 
 
 @pytest.mark.parametrize(

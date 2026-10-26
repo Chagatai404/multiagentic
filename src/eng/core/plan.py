@@ -11,6 +11,7 @@ from enum import StrEnum
 from fnmatch import fnmatchcase
 from functools import cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field, field_validator, model_validator
 
@@ -18,6 +19,8 @@ from eng.core.models import (
     Budgets,
     Contract,
     Risk,
+    Role,
+    RoleLimits,
     State,
     VerificationResult,
     identity,
@@ -59,6 +62,47 @@ PROBLEMS = frozenset(
     {NodeStatus.PAUSED, NodeStatus.BLOCKED, NodeStatus.FAILED, NodeStatus.CANCELLED}
 )
 DEAD = frozenset({NodeStatus.FAILED, NodeStatus.CANCELLED, NodeStatus.SKIPPED})
+
+
+class BudgetOverrides(Contract):
+    """Additive budget fields. Omitted/None fields inherit; clearing is a human action.
+
+    Role thresholds merge field by field and always remain subordinate to task totals.
+    Model calls count provider CLI invocations, not the provider's internal turns.
+    """
+
+    wall_seconds: float | None = Field(default=None, gt=0, le=86400, allow_inf_nan=False)
+    provider_seconds: float | None = Field(default=None, gt=0, le=86400, allow_inf_nan=False)
+    model_calls: int | None = Field(default=None, ge=1, le=100)
+    context_chars: int | None = Field(default=None, ge=256, le=1000000)
+    reported_input_tokens: int | None = Field(default=None, gt=0)
+    reported_output_tokens: int | None = Field(default=None, gt=0)
+    reported_cost_usd: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    role_limits: dict[Role, RoleLimits] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def legacy_budget(cls, value: object) -> object:
+        return value.model_dump() if isinstance(value, Budgets) else value
+
+    @field_validator("role_limits")
+    @classmethod
+    def model_roles_only(cls, value: dict[Role, RoleLimits]) -> dict[Role, RoleLimits]:
+        return Budgets.model_roles_only(value)
+
+
+def resolve_budgets(base: Budgets, *overrides: BudgetOverrides | None) -> Budgets:
+    """Resolve project defaults, plan defaults, then node fields without mutation."""
+    values = base.model_dump()
+    for override in overrides:
+        if override is None:
+            continue
+        fields = override.model_dump(exclude_none=True)
+        roles = fields.pop("role_limits", {})
+        values.update(fields)
+        for role, limits in roles.items():
+            values["role_limits"].setdefault(role, {}).update(limits)
+    return Budgets.model_validate(values)
 
 
 class PlanLimits(Contract):
@@ -168,6 +212,8 @@ class PlanNodeSpec(Contract):
     model: str | None = None
     context_paths: list[str] = Field(default_factory=list)
     risk: Risk | None = None
+    budgets: BudgetOverrides | None = None
+    max_repairs: int | None = Field(default=None, ge=0, le=10)
 
     @field_validator("id")
     @classmethod
@@ -199,9 +245,10 @@ class PlanNodeSpec(Contract):
 class PlanSpec(Contract):
     name: str = Field(min_length=1, max_length=120)
     nodes: list[PlanNodeSpec] = Field(min_length=1, max_length=MAX_NODES)
-    concurrency: int = Field(default=MAX_CONCURRENCY, ge=1, le=MAX_CONCURRENCY)
+    concurrency: int = Field(default=1, ge=1, le=MAX_CONCURRENCY)
     provider: str | None = None
-    node_budgets: Budgets | None = None
+    node_budgets: BudgetOverrides | None = None
+    node_max_repairs: int | None = Field(default=None, ge=0, le=10)
     limits: PlanLimits = Field(default_factory=PlanLimits)
 
     @model_validator(mode="after")
@@ -341,12 +388,18 @@ class PlanNode(Contract):
     node_commit: str | None = None
     integrated_commit: str | None = None
     message: str = ""
+    # None is a legacy record, resolved and persisted when its task is first created.
+    effective_budgets: Budgets | None = None
+    effective_max_repairs: int | None = Field(default=None, ge=0, le=10)
 
 
 class PlanRecord(Contract):
     id: str = Field(default_factory=identity)
     project: Path
     spec: PlanSpec
+    # Before E1 node_budgets was a complete replacement, including null limits.
+    # New records explicitly use 2; missing legacy metadata must keep that behavior.
+    budget_schema_version: Literal[1, 2] = 1
     nodes: list[PlanNode]
     status: PlanStatus = PlanStatus.CREATED
     base_commit: str
