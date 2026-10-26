@@ -336,6 +336,22 @@ recorded as INCOMPLETE. The hook entry point now scrubs repository-local `GIT_*`
 deleted side of a rename from protected-path/ownership checks; it now uses `--no-renames`.
 Plan limits had no explicit override; `--clear-limits` was added.
 
+**GitHub Actions evidence (ubuntu-latest and windows-latest, Python 3.12 and 3.14, plus the
+MCP-SDK and installed-wheel jobs).** Run 9 on `c4cd75d` passed all six jobs (the Windows
+jobs execute the full suite, including threaded plans, slot locks, real Git hooks through
+Git for Windows `sh`, blocking pre-push and the MCP subprocess; Windows 3.14 collected 556
+items, 554 passed, and Git there was 2.56). The two earlier runs on this branch each
+failed one Windows test and both failures were in the new tests, not in product code:
+(1) run 7: the unusual-filename test wrote non-ASCII text as UTF-8 but the fixture's check
+script read it with the platform default encoding (cp1252) - fixed in the fixture; (2) run
+8: the saturation test counted overlap inside the provider call only, which depends on
+machine speed (2 instead of 3 on a slow runner) although the cap held - tests now derive
+in-flight nodes from recorded `node_started`/`node_finished` events (also across two plans
+sharing the cap). Writing that measure exposed a real but harmless ordering gap: the slot
+was released before the finish event was logged, so the audit trail could briefly overstate
+concurrency; the finish is now recorded before the slot is released. Windows suite time is
+about 5-6 minutes versus 80 seconds on Linux.
+
 **Adapter drift check.** Every flag `ClaudeProvider` passes (`--safe-mode --restricted
 --print --output-format --no-session-persistence --permission-mode --permission-prompts
 --strict-mcp-config --mcp-config --setting-sources --tools --disable-slash-commands
@@ -345,7 +361,7 @@ could not be re-checked (not installed here); its baseline remains 0.149.0.
 **Not established.** Successful live model editing with Codex or Claude (no authenticated
 provider was available or used); firing inside live Claude Code/Codex hooks; real CI-service
 delivery (`ci-trigger` is driven with emulated events and GitHub-style variables); any real
-third-party command provider; Windows runtime behaviour of the M6 code (threads, slot
-locks, hook scripts through Git for Windows `sh`), which only the CI matrix exercises; load
-beyond three concurrent nodes by design; and scheduling performance (no benchmark of M6
+third-party command provider; Windows runtime behaviour beyond what the CI suite covers
+(it passes the full offline suite, but only with emulated providers); load beyond three
+concurrent nodes by design; and scheduling performance (no benchmark of M6
 was made, so no speed or cost claim is made).

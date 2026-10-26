@@ -49,8 +49,8 @@ Start with the [README](../README.md); design is in [ARCHITECTURE](../ARCHITECTU
    report usage pause conservatively. Provider tool/turn limits are unsupported.
 6. Plans need Git 2.40+, a clean source checkout while they run, and one confirmed
    required check. Integration reuses your checks, so a weak suite gives weak integration.
-7. Windows runtime behaviour of M6 is exercised only by the CI matrix (validation ran on
-   Linux); deep Windows paths can still fail closed (see M3 notes).
+7. M6 passes the full offline suite on Windows in CI, but only with emulated providers and
+   local Git; deep Windows paths can still fail closed (see M3 notes).
 8. The context cache is opt-in and was slower on the measured fixture; no benchmark of M6
    scheduling exists.
 9. Runtime parallelism shares one SQLite database and one Git object store; three
@@ -66,7 +66,7 @@ Start with the [README](../README.md); design is in [ARCHITECTURE](../ARCHITECTU
 | Source + wheel build, wheel-to-source byte comparison | pass (52 files) |
 | Fresh-wheel end-to-end smoke (plan lifecycle, MCP, hooks, verify-ref) | pass |
 | MCP official-SDK interoperability | pass (mcp 2.3.0, scratch env) |
-| GitHub Actions on the pushed branch (ubuntu/windows x 3.12/3.14, MCP, package) | **to be confirmed after push** |
+| GitHub Actions on the pushed branch (ubuntu/windows x 3.12/3.14, MCP, package) | pass, run 9 on `c4cd75d` (6/6 jobs); earlier runs 7-8 found two test-side issues, fixed |
 | Live provider smoke test with credentials | **not run - owner action** (`ENG_LIVE_CODEX=1` for Codex) |
 | Git tag / package index upload | **not done - owner action** |
 

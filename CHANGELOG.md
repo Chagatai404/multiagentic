@@ -29,8 +29,8 @@ M6 - verified offline
 - SQLite migration 5 (`plans`, `plan_events`, `ref_checks`); `eng --version`; `py.typed`;
   CI jobs for MCP SDK compatibility and an installed-wheel smoke test.
 - Not validated: live provider editing, live client hooks, real CI-service delivery,
-  third-party command providers, Windows runtime for M6 (CI covers it). See
-  docs/RELEASE.md.
+  third-party command providers. The M6 suite passes on Linux and Windows in CI with
+  emulated providers. See docs/RELEASE.md.
 
 ## M5 - verified offline
 

@@ -264,7 +264,7 @@ project. Tools take ids only, output is redacted and bounded, and only the opt-i
 `eng_submit` mutates (through `submit`). It exposes no approve/resume/cancel/integrate/
 promote tool, so approval cannot be self-granted through it.
 
-Limits: Windows and POSIX runtime parity is exercised by CI, not by the validation host
-(Linux here); real CI-service delivery, live provider editing, live client hooks and
+Limits: the full offline suite passes on Linux and Windows in CI (validation ran on Linux);
+real CI-service delivery, live provider editing, live client hooks and
 real third-party command providers are not validated; runtime parallelism shares one
 SQLite database (WAL, 10-second busy timeout) and one Git object store.

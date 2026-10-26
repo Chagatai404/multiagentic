@@ -36,5 +36,5 @@ Later milestones must not weaken completion or recovery guarantees to improve sp
 
 Provider tool/turn usage and hard in-flight spend caps remain unsupported. Successful
 live model editing, live-client hook firing and real CI-service delivery are not
-established. POSIX runtime behavior was verified on Linux for M5/M6; Windows runtime
-behavior for M6 is exercised by CI only.
+established. POSIX runtime behavior was verified on Linux for M5/M6, and the M6 suite passes on
+Windows in CI (emulated providers only).
