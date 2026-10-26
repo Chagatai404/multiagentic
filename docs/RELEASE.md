@@ -84,6 +84,11 @@ evidence is in [VALIDATION](VALIDATION.md).
 11. E2-E5 were verified on Linux locally and by the CI matrix below; there was no
     separate independent review of those slices. Expanded usage dashboards are not
     included.
+12. One intermittent Windows failure is unexplained: in CI run 29 (windows-latest,
+    Python 3.12) `test_two_plans_share_the_project_wide_slot_cap` saw one of two
+    concurrently running plans end BLOCKED. It passed in every other CI job and in 25
+    Linux repetitions. The test now reports the blocked reason if it recurs. Treat two
+    plans running at once on Windows with care until it is understood.
 
 ## Release checklist
 
@@ -92,7 +97,7 @@ evidence is in [VALIDATION](VALIDATION.md).
 | Full offline suite (Linux, CPython 3.13, local) | 713 passed, 2 skipped, 1 deselected |
 | Ruff, strict mypy, `uv lock` | pass |
 | Source + wheel build, installed-wheel smoke | pass |
-| GitHub Actions on the pushed branch (ubuntu/windows x 3.12/3.14, MCP, package) | CI_PENDING |
+| GitHub Actions on the pushed branch (ubuntu/windows x 3.12/3.14, MCP, package) | pass: run 30 on `86a074d` (6/6 jobs); runs 25-28 on the E2-E5 commits also passed. Run 29 on `7394095` failed one job (see limitation 12) |
 | Live provider smoke test with credentials | **not run - owner action** |
 | Fast-forward `main`, Git tag `v1.1.0`, GitHub Release | via the manual `release` workflow |
 | Package index (PyPI) upload | **not done - owner action** (no credentials here) |
