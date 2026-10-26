@@ -25,6 +25,7 @@ from eng.core.models import (
 from eng.core.plan import outside_ownership
 from eng.core.policy import TERMINAL, completion_gate
 from eng.core.reuse import attestation_problem, attested_planner_handoff
+from eng.core.routing import route_model
 from eng.core.workflow import (
     classify_task,
     escalate_classification,
@@ -504,9 +505,7 @@ class Engine:
         )
         task.pending_role = role
         task.pending_invocation_id = invocation_id
-        task.pending_model = (
-            task.spec.model if task.spec.model is not None else task.config.role_models.get(role)
-        )
+        task.pending_model = self._select_model(task, role)
         task.provider_calls += 1
         task.checkpoint = "provider_started"
         task.review_passed = False
@@ -621,6 +620,39 @@ class Engine:
             task.review_digest = workspace_digest(task.workspace) if task.review_passed else None
         self.store.complete_invocation(task, result.model_dump_json(), invocation_id, role)
         return True
+
+    def _select_model(self, task: Task, role: Role) -> str | None:
+        """Explicit task model, else the first matching E3 route, else role_models.
+
+        Routes use the current classification, so escalation selects the matching
+        stronger route. A route the provider cannot honour is skipped, never forced.
+        """
+        if task.spec.model is not None:
+            return task.spec.model
+        classification = task.classification
+        decision = (
+            route_model(task.config.routing, classification, role)
+            if classification is not None
+            else None
+        )
+        if decision is not None and classification is not None:
+            payload = {
+                "role": role.value,
+                "route": decision.label,
+                "index": decision.index,
+                "model": decision.model,
+                "complexity": classification.complexity.value,
+                "risk": classification.risk.value,
+            }
+            if self.provider.capabilities.model_selection:
+                self.store.event(task, "model_routed", payload)
+                return decision.model
+            self.store.event(
+                task,
+                "route_skipped",
+                {**payload, "reason": f"provider {self.provider.name} has no model selection"},
+            )
+        return task.config.role_models.get(role)
 
     def _attested_planning(self, task: Task) -> bool:
         """Satisfy initial planning from a valid human plan attestation, without a call.

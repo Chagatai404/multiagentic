@@ -10,7 +10,10 @@ class FakeProvider:
     """Explicit deterministic edits for offline demos; never pretends to understand a task."""
 
     name = "fake"
-    capabilities = Capabilities(kind="fake", file_editing=True, working_directory_isolation=True)
+    # Accepts and ignores a requested model, so routing is testable offline.
+    capabilities = Capabilities(
+        kind="fake", file_editing=True, working_directory_isolation=True, model_selection=True
+    )
 
     def __init__(self, changes: dict[str, str] | None = None) -> None:
         self.changes = changes or {}

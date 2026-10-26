@@ -29,8 +29,9 @@ follow the [calibration protocol](BENCHMARKS.md) only after explicit owner confi
 Fixture success establishes policy/transport behavior, not real-model savings.
 
 E2 plan/context reuse is implemented as described in [CONTEXT_AND_PLAN_REUSE.md](
-CONTEXT_AND_PLAN_REUSE.md). E3 automatic provider/model routing, E4 new retry
-optimizations and E5 preset flags are deferred. Existing role_models remains explicit configuration.
+CONTEXT_AND_PLAN_REUSE.md). E3 explicit routing is described in [ROUTING.md](ROUTING.md); inspect
+`eng plan preview` for routed providers and models. E4 new retry optimizations and E5
+preset flags are deferred. Existing role_models remains explicit configuration.
 No dispatch settings change in this efficiency slice: per-client/manual defaults stay
 as configured; the earlier top-level keyword installer behavior remains an existing
 owner opt-in. No hooks are installed or enabled as part of this upgrade.

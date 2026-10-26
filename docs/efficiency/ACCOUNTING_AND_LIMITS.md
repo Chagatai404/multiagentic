@@ -10,7 +10,7 @@ complete total when `missing > 0`. No observations yields null, not zero usage.
 | Orchestration invocation | Durable reservation, before a role side effect; includes unfinished reservations |
 | Provider execution | Measured entry to the adapter's `execute` method; not proof a CLI launched or authenticated |
 | Provider CLI session / internal model or tool turns | Unavailable; one adapter invocation may perform many internal turns |
-| Selected provider/model | Saved operator selection; `groups.provider` / `groups.model` |
+| Selected provider/model | Saved operator selection, explicit or via an E3 route (`model_routed` events); `groups.provider` / `groups.model` |
 | Actual model | `ProviderResult.actual_model`, only explicit provider evidence; current built-in adapters leave it unknown |
 | Packet chars / UTF-8 bytes | Measured final request sent to the adapter, after read-only snapshot path rewriting; not hidden/system/tool context |
 | Input/output/cache/reasoning | Native provider-reported counters; missing fields remain null |

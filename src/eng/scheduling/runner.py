@@ -51,6 +51,7 @@ from eng.core.reuse import (
     node_scope_digest,
     policy_digest,
 )
+from eng.core.routing import node_classification, select_provider
 from eng.execution.integrate import changed_between, create_integration, head, is_ancestor
 from eng.execution.process import redact
 from eng.execution.workspace import task_lock, try_lock, unlock
@@ -99,8 +100,19 @@ class PlanRunner:
             raise ValueError(
                 "A plan needs at least one confirmed required check in .engineering/project.yaml"
             )
-        for name in {node.provider or spec.provider or config.provider for node in spec.nodes}:
-            self.provider_factory(name, config)  # unknown providers fail before any effect
+        providers = {
+            node.id: select_provider(
+                node.provider or spec.provider,
+                config.routing,
+                node_classification(node),
+                config.provider,
+            )[0]
+            for node in spec.nodes
+        }
+        for name in set(providers.values()):
+            # Unknown or non-editing providers fail before any effect.
+            if not self.provider_factory(name, config).capabilities.file_editing:
+                raise ValueError(f"Provider {name} cannot edit files")
         plan_id = identity()
         branch, base, workspace = create_integration(self.root, plan_id)
         plan = PlanRecord(
@@ -111,6 +123,7 @@ class PlanRunner:
             nodes=[
                 PlanNode(
                     spec=node,
+                    effective_provider=providers[node.id],
                     effective_budgets=resolve_budgets(
                         config.budgets, spec.node_budgets, node.budgets
                     ),
@@ -279,7 +292,10 @@ class PlanRunner:
         task_spec = TaskSpec(
             description=node_description(node.spec),
             acceptance=node.spec.acceptance,
-            provider=node.spec.provider or spec.provider or config.provider,
+            provider=node.spec.provider
+            or spec.provider
+            or node.effective_provider
+            or config.provider,
             model=node.spec.model,
             budgets=budgets,
             context_paths=node.spec.context_paths,

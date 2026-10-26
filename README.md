@@ -284,7 +284,8 @@ See [accounting semantics](docs/efficiency/ACCOUNTING_AND_LIMITS.md),
 [large-project runbook](docs/efficiency/LARGE_PROJECT_RUNBOOK.md). E0/E1 cover telemetry
 and configured budgets; E2 adds [dependency handoffs and human plan
 attestations](docs/efficiency/CONTEXT_AND_PLAN_REUSE.md) (`context_reuse: true`,
-`eng plan attest PLAN_ID NODE`). Automatic routing and preset flags remain future
+`eng plan attest PLAN_ID NODE`). E3 adds explicit
+[classification routing](docs/efficiency/ROUTING.md). Preset flags remain future
 work. Offline fixtures do not demonstrate real-model cost or quality improvements.
 
 ```sh

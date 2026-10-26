@@ -30,6 +30,12 @@ from eng.core.models import (
 from eng.core.plan import PlanSpec, PlanStatus, resolve_budgets, topological_order
 from eng.core.policy import TERMINAL
 from eng.core.refs import CIConclusion, CIEvent, ci_bypass, ci_description, ci_idempotency
+from eng.core.routing import (
+    RouteDecision,
+    node_classification,
+    route_model,
+    select_provider,
+)
 from eng.core.triggers import TriggerEnvelope, TriggerMode, TriggerOrigin
 from eng.core.workflow import classify_task, escalate_classification, select_workflow
 from eng.execution.process import redact, redact_data
@@ -204,11 +210,10 @@ def run(
             budget.reported_cost_usd = reported_cost_usd
         if max_repairs is not None:
             config.workflow.max_repairs = max_repairs
-        selected = provider_for(provider or config.provider, fake_change, config)
         spec = TaskSpec(
             description=description,
             acceptance=accept,
-            provider=selected.name,
+            provider=provider or config.provider,
             model=model,
             context_paths=context or [],
             budgets=budget,
@@ -219,9 +224,20 @@ def run(
             ),
             human_approved=approve_high_risk,
         )
+        name, routed = select_provider(
+            provider, config.routing, classify_task(spec), config.provider
+        )
+        selected = provider_for(name, fake_change, config)
+        spec.provider = selected.name
         task = Task(project=root, spec=spec, config=config)
         store = Store(root)
         store.create(task)
+        if routed is not None:
+            store.event(
+                task,
+                "provider_routed",
+                {"provider": selected.name, "route": routed.label, "index": routed.index},
+            )
         exit_for(asyncio.run(Engine(store, selected).execute(task.id)))
     except (ValueError, OSError, ValidationError) as error:
         fail(error)
@@ -1064,6 +1080,11 @@ def plan_preview(
                 if workflow.reviewer:
                     roles.append(Role.REVIEWER.value)
             minimum_calls += len(roles)
+            routed: dict[str, RouteDecision] = {}
+            for role in roles:
+                decision = route_model(config.routing, classification, Role(role))
+                if decision is not None and node.model is None:
+                    routed[role] = decision
             nodes.append(
                 {
                     "id": node.id,
@@ -1073,11 +1094,22 @@ def plan_preview(
                     "roles": roles,
                     "classification": classification.model_dump(mode="json"),
                     "approval_required": workflow.approval_required,
-                    "provider": node.provider or spec.provider or config.provider,
+                    "provider": select_provider(
+                        node.provider or spec.provider,
+                        config.routing,
+                        node_classification(node),
+                        config.provider,
+                    )[0],
                     "selected_model": node.model,
                     "role_models": {
-                        role: node.model or config.role_models.get(Role(role)) for role in roles
+                        role: node.model
+                        or (routed[role].model if role in routed else None)
+                        or config.role_models.get(Role(role))
+                        for role in roles
                     },
+                    # Initial-classification routes; the provider's model support and
+                    # later escalation are checked at run time.
+                    "routes": {role: routed[role].label for role in routed},
                     "budget_covers_minimum_calls": budgets.model_calls >= len(roles),
                 }
             )

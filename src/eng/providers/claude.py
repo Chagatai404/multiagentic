@@ -153,6 +153,7 @@ class ClaudeProvider:
     capabilities = Capabilities(
         kind="coding_cli",
         file_editing=True,
+        model_selection=True,
         token_reporting=True,
         working_directory_isolation=True,
         permission_controls=True,

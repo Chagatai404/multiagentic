@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 def now() -> str:
@@ -219,6 +219,43 @@ class CommandProviderConfig(Contract):
         return names
 
 
+MAX_ROUTES = 50
+
+
+class RouteMatch(Contract):
+    """Empty lists match anything; a rule matches when every non-empty list matches."""
+
+    task_types: list[TaskType] = Field(default_factory=list)
+    complexities: list[Complexity] = Field(default_factory=list)
+    risks: list[Risk] = Field(default_factory=list)
+    roles: list[Role] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def model_roles_only(self) -> "RouteMatch":
+        if Role.VERIFIER in self.roles:
+            raise ValueError("verifier runs checks and cannot be routed to a model")
+        return self
+
+
+class RouteRule(Contract):
+    label: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_.-]+$")
+    when: RouteMatch = Field(default_factory=RouteMatch)
+    provider: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_-]*$")
+    model: str | None = Field(default=None, min_length=1, max_length=256)
+
+    @model_validator(mode="after")
+    def valid_target(self) -> "RouteRule":
+        if self.provider is None and self.model is None:
+            raise ValueError(f"route {self.label} selects neither a provider nor a model")
+        if self.model is not None and not self.model.strip():
+            raise ValueError(f"route {self.label} has a blank model")
+        if self.provider is not None and self.when.roles:
+            raise ValueError(
+                f"route {self.label}: a provider applies to a whole task; remove `roles`"
+            )
+        return self
+
+
 class ProjectConfig(Contract):
     schema_version: Literal[1] = 1
     name: str = "project"
@@ -241,6 +278,8 @@ class ProjectConfig(Contract):
     role_models: dict[Role, str] = Field(default_factory=dict)
     pricing: list[PricingRule] = Field(default_factory=list)
     command_providers: dict[str, CommandProviderConfig] = Field(default_factory=dict)
+    # E3 explicit routing rules, first match wins; empty keeps E2 selection behaviour.
+    routing: list[RouteRule] = Field(default_factory=list, max_length=MAX_ROUTES)
 
     @field_validator("command_providers")
     @classmethod
@@ -251,6 +290,14 @@ class ProjectConfig(Contract):
             if not re.fullmatch(r"[a-z][a-z0-9_-]*", name) or name in BUILTIN_PROVIDERS:
                 raise ValueError(f"Invalid or reserved provider name: {name!r}")
         return providers
+
+    @field_validator("routing")
+    @classmethod
+    def unique_routes(cls, rules: list[RouteRule]) -> list[RouteRule]:
+        labels = [rule.label for rule in rules]
+        if len(labels) != len(set(labels)):
+            raise ValueError("routing rule labels must be unique")
+        return rules
 
     @field_validator("role_models")
     @classmethod
@@ -372,6 +419,8 @@ class Capabilities(Contract):
     cost_reporting: bool = False
     working_directory_isolation: bool = False
     permission_controls: bool = False
+    # Accepts ProviderRequest.model (E3 routing skips model routes otherwise).
+    model_selection: bool = False
     context_limit: int | None = None
 
 

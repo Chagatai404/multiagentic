@@ -35,6 +35,9 @@ class CommandProvider:
     def __init__(self, name: str, config: CommandProviderConfig) -> None:
         self.name = name
         self.config = config
+        self.capabilities = Capabilities(
+            kind="coding_cli", file_editing=True, model_selection=config.model_flag is not None
+        )
 
     async def execute(
         self,

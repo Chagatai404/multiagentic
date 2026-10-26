@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased - efficiency E3
+
+- Add explicit `routing` rules (task type, complexity, risk, role) to project/user
+  config. Model routes apply per role call with the current classification; provider
+  routes apply at `eng run` and plan-node creation and are frozen per node.
+- Add the `model_selection` provider capability; unusable model routes are skipped
+  with a `route_skipped` event. Decisions log `model_routed` / `provider_routed`.
+- Show routed providers, models and route labels in `eng plan preview`. Explicit
+  provider/model choices always win; workflow gates and budgets are unchanged.
+
 ## Unreleased - efficiency E2
 
 - Record a digest-bound dependency handoff (summary, review verdict, changed files,

@@ -126,6 +126,7 @@ class CodexProvider:
     capabilities = Capabilities(
         kind="coding_cli",
         file_editing=True,
+        model_selection=True,
         tool_execution=True,
         streaming=False,
         token_reporting=True,

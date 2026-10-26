@@ -413,6 +413,9 @@ class PlanNode(Contract):
     # None is a legacy record, resolved and persisted when its task is first created.
     effective_budgets: Budgets | None = None
     effective_max_repairs: int | None = Field(default=None, ge=0, le=10)
+    # E3 provider resolved at creation (explicit node/plan, route, or project default).
+    # None is a legacy record: resolve as before at launch.
+    effective_provider: str | None = None
     # E2 durable summary index entry, recorded when the node integrates.
     handoff: DependencyHandoff | None = None
     # E2 human plan attestation; validated again at launch and by the engine.

@@ -44,8 +44,12 @@ Later milestones must not weaken completion or recovery guarantees to improve sp
   contracts, and human `eng plan attest` attestations that replace only a node's
   initial planner call, invalidated on scope, policy, revision or owned-path change.
   Review, checks, approval and ownership are unchanged; no live savings are claimed.
-- **Efficiency E3–E5 — deferred:** evidence-based automatic routing, additional retry
-  optimizations and preset flags. Existing in-memory cache remains off by default.
+- **Efficiency E3 — verified offline:** explicit operator routing rules select models
+  per role call (re-evaluated after risk escalation) and providers per task or plan
+  node, with capability validation and recorded decisions. Explicit selections win;
+  workflow gates are unchanged. No route is shown to save cost or keep quality.
+- **Efficiency E4–E5 — deferred:** additional retry optimizations and preset flags.
+  Existing in-memory cache remains off by default.
 
 Provider tool/turn usage and hard in-flight spend caps remain unsupported. Successful
 live model editing, live-client hook firing and real CI-service delivery are not
