@@ -6,7 +6,7 @@ import signal
 import subprocess
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -40,7 +40,9 @@ def redact_data(value: Any) -> Any:
     return value
 
 
-def clean_environment(*, provider: bool | Literal["codex", "claude"] = False) -> dict[str, str]:
+def clean_environment(
+    *, provider: bool | Literal["codex", "claude"] = False, extra: Sequence[str] = ()
+) -> dict[str, str]:
     # Project checks must not inherit the host's API keys or arbitrary environment values.
     allowed = {
         "PATH",
@@ -67,6 +69,7 @@ def clean_environment(*, provider: bool | Literal["codex", "claude"] = False) ->
             "CLAUDE_CODE_OAUTH_TOKEN",
             "CLAUDE_CONFIG_DIR",
         }
+    allowed |= {name.upper() for name in extra}
     result = {key: value for key, value in os.environ.items() if key.upper() in allowed}
     result.update({"GIT_TERMINAL_PROMPT": "0", "ENG_ACTIVE": "1", "PYTHONIOENCODING": "utf-8"})
     return result
@@ -123,6 +126,7 @@ async def run_process(
     stderr_path: Path | None = None,
     stdout_json: bool = False,
     stdout_observer: Callable[[str], None] | None = None,
+    env_allow: Sequence[str] = (),
 ) -> ProcessResult:
     started = time.monotonic()
     options: dict[str, object] = {}
@@ -134,7 +138,7 @@ async def run_process(
         process = await asyncio.create_subprocess_exec(
             *argv,
             cwd=cwd,
-            env=clean_environment(provider=provider),
+            env=clean_environment(provider=provider, extra=env_allow),
             stdin=asyncio.subprocess.PIPE if stdin is not None else asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,

@@ -4,14 +4,25 @@ import os
 import re
 import subprocess
 import sys
-from collections.abc import Iterator
+import threading
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
+from typing import IO
 
 from eng.core.models import Task
 
+# `git worktree add` from several worker threads at once contends on shared metadata.
+_WORKTREE_LOCK = threading.Lock()
 
-def git(repository: Path, *arguments: str) -> str:
+
+def git_result(
+    repository: Path,
+    *arguments: str,
+    env: Mapping[str, str] | None = None,
+    timeout: float = 30,
+) -> tuple[int, str, str]:
+    """Run git and return (exit code, stdout, stderr) without interpreting failure."""
     try:
         result = subprocess.run(
             # Windows Git otherwise fails beyond MAX_PATH in deep worktrees and role snapshots.
@@ -20,16 +31,21 @@ def git(repository: Path, *arguments: str) -> str:
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=30,
+            timeout=timeout,
             check=False,
-            env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+            env={**os.environ, "GIT_TERMINAL_PROMPT": "0", **(env or {})},
         )
     except subprocess.TimeoutExpired as error:
         raise ValueError(f"Git operation timed out: {arguments[0]}") from error
-    if result.returncode:
-        raise ValueError(result.stderr.strip() or "Git operation failed")
+    return result.returncode, result.stdout, result.stderr
+
+
+def git(repository: Path, *arguments: str, env: Mapping[str, str] | None = None) -> str:
+    code, stdout, stderr = git_result(repository, *arguments, env=env)
+    if code:
+        raise ValueError(stderr.strip() or "Git operation failed")
     # NUL-delimited filenames may legitimately start/end in whitespace.
-    return result.stdout if "-z" in arguments else result.stdout.strip()
+    return stdout if "-z" in arguments else stdout.strip()
 
 
 def repository_root(path: Path) -> Path:
@@ -39,12 +55,18 @@ def repository_root(path: Path) -> Path:
 def prepare(task: Task) -> Path:
     if git(task.project, "status", "--porcelain", "--untracked-files=normal"):
         raise ValueError("Repository must be clean; commit or preserve existing changes first")
-    task.base_commit = git(task.project, "rev-parse", "HEAD")
+    if task.spec.base_commit:
+        task.base_commit = git(
+            task.project, "rev-parse", "--verify", f"{task.spec.base_commit}^{{commit}}"
+        )
+    else:
+        task.base_commit = git(task.project, "rev-parse", "HEAD")
     workspace = task.project / ".engineering" / "worktrees" / task.id
-    if workspace.exists():
-        raise ValueError("Workspace already exists; inspect it before continuing")
-    workspace.parent.mkdir(parents=True, exist_ok=True)
-    git(task.project, "worktree", "add", "--detach", str(workspace), task.base_commit)
+    with _WORKTREE_LOCK:
+        if workspace.exists():
+            raise ValueError("Workspace already exists; inspect it before continuing")
+        workspace.parent.mkdir(parents=True, exist_ok=True)
+        git(task.project, "worktree", "add", "--detach", str(workspace), task.base_commit)
     task.workspace = workspace
     return workspace
 
@@ -64,7 +86,9 @@ def safe_path(root: Path, relative: str) -> Path:
 
 
 def changed_paths(workspace: Path, base: str) -> list[str]:
-    tracked = git(workspace, "diff", "--name-only", "-z", base)
+    # No rename detection: both the old and the new path of a rename must be visible to
+    # protected-path and ownership checks.
+    tracked = git(workspace, "diff", "--name-only", "--no-renames", "-z", base)
     untracked = git(workspace, "ls-files", "--others", "--exclude-standard", "-z")
     return sorted(set(item for item in (tracked + "\0" + untracked).split("\0") if item))
 
@@ -84,41 +108,60 @@ def protected_changes(paths: list[str], patterns: list[str]) -> list[str]:
     ]
 
 
+def try_lock(path: Path) -> IO[bytes] | None:
+    """Take a non-blocking exclusive OS lock; None when another holder has it.
+
+    The lock releases when the handle is closed or the process dies. Lock files are never
+    removed underneath another waiter.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle = path.open("a+b")
+    try:
+        handle.seek(0)
+        handle.write(b"0")
+        handle.flush()
+        handle.seek(0)
+        if sys.platform == "win32":
+            import msvcrt
+
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        handle.close()
+        return None
+    return handle
+
+
+def unlock(handle: IO[bytes]) -> None:
+    try:
+        handle.seek(0)
+        if sys.platform == "win32":
+            import msvcrt
+
+            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    finally:
+        handle.close()
+
+
 @contextmanager
 def task_lock(project: Path, task_id: str) -> Iterator[None]:
     """OS lock releases on crash; lock files are never removed underneath another waiter."""
     if not re.fullmatch(r"[a-zA-Z0-9_-]{1,64}", task_id):
         raise ValueError("Invalid task identifier")
-    directory = project / ".engineering" / "locks"
-    directory.mkdir(parents=True, exist_ok=True)
-    with (directory / f"{task_id}.lock").open("a+b") as handle:
-        handle.seek(0)
-        handle.write(b"0")
-        handle.flush()
-        handle.seek(0)
-        try:
-            if sys.platform == "win32":
-                import msvcrt
-
-                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
-            else:
-                import fcntl
-
-                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError as error:
-            raise ValueError("This task is already running in another process") from error
-        try:
-            yield
-        finally:
-            handle.seek(0)
-            if sys.platform == "win32":
-                import msvcrt
-
-                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
-            else:
-                import fcntl
-
-                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    handle = try_lock(project / ".engineering" / "locks" / f"{task_id}.lock")
+    if handle is None:
+        raise ValueError("This task is already running in another process")
+    try:
+        yield
+    finally:
+        unlock(handle)
 
 
 def save_diff(task: Task, directory: Path) -> None:

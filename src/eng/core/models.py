@@ -1,3 +1,4 @@
+import re
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
@@ -162,6 +163,44 @@ class Check(Contract):
         return value
 
 
+BUILTIN_PROVIDERS = frozenset({"fake", "codex", "claude"})
+_CREDENTIAL_NAME = re.compile(r"(?:token|secret|password|api.?key|credential|private.?key)", re.I)
+
+
+class CommandProviderConfig(Contract):
+    """A coding CLI attached declaratively: fixed argv, prompt on stdin, no vendor flags in eng.
+
+    The command is trusted project configuration, like a check. It runs in the task
+    workspace with a scrubbed environment; only ``env_allow`` credentials are forwarded.
+    Token usage and cost stay unknown. Planner and reviewer roles must print the strict
+    JSON handoff as their whole stdout, otherwise use the CLI for engineering roles only.
+    """
+
+    argv: list[str] = Field(min_length=1)
+    model_flag: str | None = None
+    env_allow: list[str] = Field(default_factory=list)
+
+    @field_validator("argv")
+    @classmethod
+    def valid_argv(cls, value: list[str]) -> list[str]:
+        if any("\x00" in item for item in value) or not value[0].strip():
+            raise ValueError("command must have an executable and contain no NULs")
+        return value
+
+    @field_validator("env_allow")
+    @classmethod
+    def credential_names(cls, names: list[str]) -> list[str]:
+        for name in names:
+            if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+                raise ValueError(f"Invalid environment variable name: {name}")
+            if not _CREDENTIAL_NAME.search(name):
+                raise ValueError(
+                    f"{name} must look like a credential (TOKEN, SECRET, PASSWORD, API_KEY, "
+                    "CREDENTIAL or PRIVATE_KEY) so its value is redacted; put settings in argv"
+                )
+        return names
+
+
 class ProjectConfig(Contract):
     schema_version: Literal[1] = 1
     name: str = "project"
@@ -183,6 +222,17 @@ class ProjectConfig(Contract):
     provider: str = "codex"
     role_models: dict[Role, str] = Field(default_factory=dict)
     pricing: list[PricingRule] = Field(default_factory=list)
+    command_providers: dict[str, CommandProviderConfig] = Field(default_factory=dict)
+
+    @field_validator("command_providers")
+    @classmethod
+    def valid_command_providers(
+        cls, providers: dict[str, CommandProviderConfig]
+    ) -> dict[str, CommandProviderConfig]:
+        for name in providers:
+            if not re.fullmatch(r"[a-z][a-z0-9_-]*", name) or name in BUILTIN_PROVIDERS:
+                raise ValueError(f"Invalid or reserved provider name: {name!r}")
+        return providers
 
     @field_validator("role_models")
     @classmethod
@@ -219,6 +269,12 @@ class TaskSpec(Contract):
         default_factory=ClassificationOverrides
     )
     human_approved: bool = False
+    # Empty means unrestricted (M0-M5 behaviour). Plan nodes always declare ownership;
+    # the engine fails a task that changes any path outside these patterns.
+    owned_paths: list[str] = Field(default_factory=list)
+    # Start the worktree from this commit instead of the checkout's HEAD (plan nodes
+    # start from the integration head so they see their dependencies' integrated work).
+    base_commit: str | None = Field(default=None, pattern=r"^[0-9a-fA-F]{7,64}$")
 
     @field_validator("model")
     @classmethod

@@ -20,6 +20,7 @@ from eng.core.models import (
     TaskType,
     identity,
 )
+from eng.core.plan import outside_ownership
 from eng.core.policy import TERMINAL, completion_gate
 from eng.core.workflow import (
     classify_task,
@@ -643,12 +644,18 @@ class Engine:
 
     def _protect(self, task: Task) -> bool:
         assert task.workspace is not None
-        forbidden = protected_changes(
-            changed_paths(task.workspace, task.base_commit or "HEAD"), task.config.protected_paths
-        )
+        changed = changed_paths(task.workspace, task.base_commit or "HEAD")
+        forbidden = protected_changes(changed, task.config.protected_paths)
         if forbidden:
             self._transition(task, State.FAILED, "Protected files changed: " + ", ".join(forbidden))
             return False
+        if task.spec.owned_paths:
+            outside = outside_ownership(changed, task.spec.owned_paths)
+            if outside:
+                self._transition(
+                    task, State.FAILED, "Changed paths outside ownership: " + ", ".join(outside)
+                )
+                return False
         return True
 
     @staticmethod

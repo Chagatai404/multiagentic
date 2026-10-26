@@ -26,6 +26,7 @@ class TriggerOrigin(StrEnum):
     CLAUDE_CODE = "claude-code"
     CODEX = "codex"
     CLI = "cli"
+    CI = "ci"
 
 
 class TriggerMode(StrEnum):

@@ -1,0 +1,402 @@
+"""Plan coordinator: dependency scheduling, bounded concurrency, serialized integration.
+
+One coordinator per plan (OS lock) launches ready nodes as ordinary tasks in worker
+threads. Each worker owns its Store connection, event loop and Git worktree, so the M3-M5
+engine runs unchanged and concurrently. At most ``MAX_CONCURRENCY`` nodes run per project
+at any time, across plans and processes (slot locks). Only this coordinator thread writes
+the plan record and the integration branch.
+"""
+
+import asyncio
+import time
+from collections.abc import Callable
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
+from pathlib import Path
+from typing import IO
+
+from eng.core.accounting import budget_stop_reason
+from eng.core.engine import Engine
+from eng.core.models import (
+    ClassificationOverrides,
+    InvocationRecord,
+    ProjectConfig,
+    State,
+    Task,
+    TaskSpec,
+    identity,
+)
+from eng.core.plan import (
+    MAX_CONCURRENCY,
+    NodeStatus,
+    PlanLimits,
+    PlanNode,
+    PlanRecord,
+    PlanSpec,
+    PlanStatus,
+    derive_plan_status,
+    node_status_for_task,
+    ready_nodes,
+    skipped_nodes,
+)
+from eng.core.policy import TERMINAL
+from eng.execution.integrate import create_integration, head
+from eng.execution.process import redact
+from eng.execution.workspace import task_lock, try_lock, unlock
+from eng.projects.config import load_config
+from eng.providers.base import Provider
+from eng.scheduling.integration import integrate_node, reconcile
+from eng.storage.store import Store
+
+ProviderFactory = Callable[[str, ProjectConfig], Provider]
+
+
+class SlotPool:
+    """Project-wide concurrency cap shared by every plan coordinator process."""
+
+    def __init__(self, root: Path, size: int = MAX_CONCURRENCY) -> None:
+        self.root = root
+        self.size = min(size, MAX_CONCURRENCY)
+
+    def acquire(self) -> IO[bytes] | None:
+        for index in range(self.size):
+            handle = try_lock(self.root / ".engineering" / "locks" / f"slot-{index}.lock")
+            if handle is not None:
+                return handle
+        return None
+
+    @staticmethod
+    def release(handle: IO[bytes]) -> None:
+        unlock(handle)
+
+
+def node_description(node: PlanNode) -> str:
+    owns = ", ".join(node.spec.owns)
+    return (
+        f"{node.spec.description}\n\nOwnership: you may create or modify only paths matching: "
+        f"{owns}. Any change outside these paths fails the task."
+    )
+
+
+class PlanRunner:
+    def __init__(
+        self, root: Path, provider_factory: ProviderFactory, *, poll_seconds: float = 0.1
+    ) -> None:
+        self.root = root
+        self.provider_factory = provider_factory
+        self.poll_seconds = poll_seconds
+
+    def create(
+        self, store: Store, spec: PlanSpec, config: ProjectConfig | None = None
+    ) -> PlanRecord:
+        """Validate providers, create the eng-owned branch/worktree and persist the plan."""
+        config = config or load_config(self.root)
+        if not any(check.required and check.confirmed for check in config.checks):
+            # Without one, no node could ever pass the completion gate: fail before any cost.
+            raise ValueError(
+                "A plan needs at least one confirmed required check in .engineering/project.yaml"
+            )
+        for name in {node.provider or spec.provider or config.provider for node in spec.nodes}:
+            self.provider_factory(name, config)  # unknown providers fail before any effect
+        plan_id = identity()
+        branch, base, workspace = create_integration(self.root, plan_id)
+        plan = PlanRecord(
+            id=plan_id,
+            project=self.root,
+            spec=spec,
+            nodes=[PlanNode(spec=node) for node in spec.nodes],
+            base_commit=base,
+            branch=branch,
+            workspace=workspace,
+            head_commit=base,
+        )
+        store.create_plan(plan)
+        return plan
+
+    # -- execution ---------------------------------------------------------------------
+
+    def _execute(self, task_id: str, resume: bool) -> str:
+        store = Store(self.root)
+        try:
+            task = store.load(task_id)
+            provider = self.provider_factory(task.spec.provider, task.config)
+            result = asyncio.run(Engine(store, provider).execute(task_id, resume=resume))
+            return result.state.value
+        finally:
+            store.close()
+
+    def _new_task(
+        self, plan: PlanRecord, node: PlanNode, config: ProjectConfig, approve: bool
+    ) -> Task:
+        spec = plan.spec
+        budgets = (spec.node_budgets or config.budgets).model_copy(deep=True)
+        task_spec = TaskSpec(
+            description=node_description(node),
+            acceptance=node.spec.acceptance,
+            provider=node.spec.provider or spec.provider or config.provider,
+            model=node.spec.model,
+            budgets=budgets,
+            context_paths=node.spec.context_paths,
+            classification_overrides=ClassificationOverrides(risk=node.spec.risk),
+            human_approved=approve,
+            owned_paths=node.spec.owns,
+            base_commit=plan.head_commit,
+        )
+        return Task(project=self.root, spec=task_spec, config=config)
+
+    def run(
+        self,
+        plan_id: str,
+        *,
+        keep_going: bool = False,
+        approve_high_risk: bool = False,
+        resume: bool = False,
+        clear_limits: bool = False,
+    ) -> PlanRecord:
+        """Schedule until nothing more can progress; returns the persisted plan."""
+        store = Store(self.root)
+        try:
+            with task_lock(self.root, f"plan-{plan_id}"):
+                return self._run(
+                    store, plan_id, keep_going, approve_high_risk, resume, clear_limits
+                )
+        finally:
+            store.close()
+
+    def _run(
+        self,
+        store: Store,
+        plan_id: str,
+        keep_going: bool,
+        approve: bool,
+        resume: bool,
+        clear_limits: bool,
+    ) -> PlanRecord:
+        plan = store.load_plan(plan_id)
+        if plan.status == PlanStatus.PROMOTED:
+            raise ValueError("Plan is already promoted")
+        if plan.cancel_requested or plan.status == PlanStatus.CANCELLED:
+            raise ValueError("Plan was cancelled; create a new plan")
+        reconcile(store, plan)
+        if clear_limits:
+            # Explicit human action, like `resume --clear-reported-limits` for one task.
+            plan.spec.limits = PlanLimits()
+            plan.message = ""
+            store.plan_event(plan.id, "limits_cleared", {"source": "explicit_cli"})
+            store.save_plan(plan)
+        config = load_config(self.root)
+        pool = SlotPool(self.root, plan.spec.concurrency)
+        futures: dict[Future[str], tuple[str, IO[bytes]]] = {}
+        queue: list[str] = []
+        for node in plan.nodes:
+            interrupted = node.status == NodeStatus.RUNNING  # a previous coordinator died
+            if interrupted or (resume and node.status in {NodeStatus.PAUSED, NodeStatus.BLOCKED}):
+                queue.append(node.spec.id)
+        store.plan_event(
+            plan.id,
+            "run_started",
+            {"keep_going": keep_going, "resume": resume, "approve_high_risk": approve},
+        )
+        if approve:
+            store.plan_event(plan.id, "human_approved", {"source": "explicit_cli", "scope": "all"})
+        limit_reason: str | None = None
+        cancelling = False
+        waiting = False
+        executor = ThreadPoolExecutor(max_workers=MAX_CONCURRENCY, thread_name_prefix="eng-node")
+
+        def collect(done: set[Future[str]]) -> None:
+            for future in done:
+                node_id, slot = futures.pop(future)
+                pool.release(slot)
+                node = plan.node(node_id)
+                try:
+                    future.result()
+                    task = store.load(node.task_id or "")
+                    node.status = node_status_for_task(task.state)
+                    node.message = task.message
+                except Exception as error:  # noqa: BLE001 - surfaced as a blocked node
+                    node.status = NodeStatus.BLOCKED
+                    node.message = redact(f"Node runner error: {error}")
+                store.plan_event(
+                    plan.id, "node_finished", {"node": node_id, "status": node.status.value}
+                )
+                store.save_plan(plan)
+
+        def launch(node: PlanNode) -> bool:
+            slot = pool.acquire()
+            if slot is None:
+                return False
+            try:
+                resumed = False
+                if node.task_id is None:
+                    task = self._new_task(plan, node, config, approve)
+                    node.base_commit = plan.head_commit
+                    store.create(task)
+                    node.task_id = task.id
+                else:
+                    task = store.load(node.task_id)
+                    resumed = task.state != State.CREATED
+                node.status = NodeStatus.RUNNING
+                node.message = ""
+                store.plan_event(
+                    plan.id, "node_started", {"node": node.spec.id, "task": node.task_id}
+                )
+                store.save_plan(plan)
+                futures[executor.submit(self._execute, node.task_id, resumed)] = (
+                    node.spec.id,
+                    slot,
+                )
+            except BaseException:
+                pool.release(slot)
+                raise
+            return True
+
+        try:
+            while True:
+                if not cancelling and store.plan_cancelled(plan.id):
+                    cancelling = True
+                    for node in plan.nodes:
+                        if node.task_id:
+                            store.cancel(node.task_id)
+                if futures:
+                    done, _ = wait(futures, timeout=self.poll_seconds, return_when=FIRST_COMPLETED)
+                    collect(done)
+                if not cancelling:
+                    for node in plan.nodes:
+                        if node.status == NodeStatus.VERIFIED:
+                            integrate_node(store, plan, node, lambda: store.plan_cancelled(plan.id))
+                    for node_id in skipped_nodes(plan.spec, plan.statuses()):
+                        skipped = plan.node(node_id)
+                        skipped.status = NodeStatus.SKIPPED
+                        skipped.message = "An upstream node failed or was cancelled"
+                        store.plan_event(plan.id, "node_skipped", {"node": node_id})
+                    store.save_plan(plan)
+                launched = False
+                starved = False  # work is ready but another plan holds every project slot
+                if not cancelling and limit_reason is None:
+                    records: list[InvocationRecord] = [
+                        record
+                        for node in plan.nodes
+                        if node.task_id
+                        for record in store.invocations(node.task_id)
+                    ]
+                    limit_reason = budget_stop_reason(records, plan.spec.limits.as_budgets())
+                    if limit_reason:
+                        plan.message = limit_reason
+                        store.plan_event(plan.id, "limit_reached", {"message": limit_reason})
+                if not cancelling and limit_reason is None:
+                    free = plan.spec.concurrency - len(futures)
+                    while queue and free > 0:
+                        node = plan.node(queue[0])
+                        task = store.load(node.task_id) if node.task_id else None
+                        if task is not None and task.state == State.COMPLETED:
+                            node.status = NodeStatus.VERIFIED  # retry integration only
+                            queue.pop(0)
+                            launched = True
+                            continue
+                        if task is not None and task.state in TERMINAL:
+                            node.status = node_status_for_task(task.state)
+                            queue.pop(0)
+                            continue
+                        if not launch(node):
+                            starved = True
+                            break
+                        queue.pop(0)
+                        free -= 1
+                        launched = True
+                    ready = ready_nodes(
+                        plan.spec,
+                        plan.statuses(),
+                        slots_free=free if not queue else 0,
+                        keep_going=keep_going,
+                    )
+                    for node_id in ready:
+                        if not launch(plan.node(node_id)):
+                            starved = True
+                            break
+                        launched = True
+                if not futures and not launched:
+                    if starved and not cancelling and limit_reason is None:
+                        # Ready work must never be abandoned because the project's shared
+                        # slots are busy elsewhere: wait, then retry (cancellation breaks).
+                        if not waiting:
+                            store.plan_event(plan.id, "waiting_for_slot", {})
+                            waiting = True
+                        time.sleep(self.poll_seconds * 5)
+                        continue
+                    if not any(n.status == NodeStatus.VERIFIED for n in plan.nodes):
+                        break
+        except KeyboardInterrupt:
+            for node in plan.nodes:
+                if node.status == NodeStatus.RUNNING and node.task_id:
+                    store.cancel(node.task_id)
+            cancelling = True
+            plan.message = "Interrupted; running nodes were cancelled and workspaces retained"
+        finally:
+            executor.shutdown(wait=True)
+            collect(set(futures))
+        if cancelling:
+            for node in plan.nodes:
+                if node.status not in {NodeStatus.INTEGRATED, NodeStatus.SKIPPED}:
+                    node.status = NodeStatus.CANCELLED
+                    node.message = node.message or "Plan cancelled"
+        plan.status = derive_plan_status(list(plan.statuses().values()))
+        plan.message = plan.message or _summary(plan)
+        store.plan_event(plan.id, "run_finished", {"status": plan.status.value})
+        store.save_plan(plan)
+        if plan.status == PlanStatus.READY and head(plan.workspace) != plan.head_commit:
+            raise ValueError("Integration worktree diverged from the recorded head")
+        return plan
+
+    # -- explicit human actions ----------------------------------------------------------
+
+    def approve_node(self, store: Store, plan_id: str, node_id: str) -> PlanRecord:
+        """Record explicit high-risk approval for one node's task; resume to continue."""
+        with task_lock(self.root, f"plan-{plan_id}"):
+            plan = store.load_plan(plan_id)
+            node = plan.node(node_id)
+            if node.task_id is None:
+                raise ValueError("Node has no task yet; use `plan run --approve-high-risk`")
+            with task_lock(self.root, node.task_id):
+                task = store.load(node.task_id)
+                if task.state in TERMINAL:
+                    raise ValueError("Cannot approve a terminal node task")
+                task.spec.human_approved = True
+                store.checkpoint(task)
+                store.event(task, "human_approved", {"source": "explicit_cli", "plan": plan_id})
+            store.plan_event(plan_id, "human_approved", {"source": "explicit_cli", "node": node_id})
+            return plan
+
+    def cancel(self, store: Store, plan_id: str) -> PlanRecord:
+        """Persist cancellation; an idle plan is finalized immediately."""
+        requested = store.cancel_plan(plan_id)
+        plan = store.load_plan(plan_id)
+        if not requested:
+            return plan
+        try:
+            with task_lock(self.root, f"plan-{plan_id}"):
+                plan = store.load_plan(plan_id)
+                for node in plan.nodes:
+                    if node.task_id:
+                        store.cancel(node.task_id)
+                        task = store.load(node.task_id)
+                        if task.state not in TERMINAL:
+                            with task_lock(self.root, task.id):
+                                store.transition(
+                                    task, State.CANCELLED, "Plan cancelled; workspace retained"
+                                )
+                    if node.status not in {NodeStatus.INTEGRATED, NodeStatus.SKIPPED}:
+                        node.status = NodeStatus.CANCELLED
+                        node.message = "Plan cancelled"
+                plan.status = PlanStatus.CANCELLED
+                plan.message = "Cancelled while idle; workspaces retained"
+                store.save_plan(plan)
+        except ValueError:
+            pass  # The active coordinator acknowledges the durable request.
+        return store.load_plan(plan_id)
+
+
+def _summary(plan: PlanRecord) -> str:
+    counts: dict[str, int] = {}
+    for node in plan.nodes:
+        counts[node.status.value] = counts.get(node.status.value, 0) + 1
+    return ", ".join(f"{name}={count}" for name, count in sorted(counts.items()))

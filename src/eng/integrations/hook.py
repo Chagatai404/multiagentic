@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from eng.core.triggers import TriggerDecision, TriggerEnvelope, TriggerMode
 
-DEFAULT_PROVIDERS = {"claude-code": "claude", "codex": "codex", "cli": None}
+DEFAULT_PROVIDERS = {"claude-code": "claude", "codex": "codex", "cli": None, "ci": None}
 ACCEPTANCE = [
     "All configured required checks pass",
     "The change does what the routed request asks, without unrelated edits",
@@ -79,7 +79,8 @@ def submit(
         raise ValueError("uncommitted changes; eng routes only from a clean checkout")
     config = load_config(root)
     selected = provider or DEFAULT_PROVIDERS[envelope.origin.value] or config.provider
-    build_registry().create(selected)  # unknown providers fail before anything is recorded
+    # Unknown providers fail before anything is recorded.
+    build_registry(command_providers=config.command_providers).create(selected)
     budgets = config.budgets.model_copy(deep=True)
     if decision.full_verification:
         budgets.model_calls = max(budgets.model_calls, 2)  # room for independent review
@@ -183,8 +184,8 @@ def _run(client: str, options: dict[str, str]) -> str:
     from eng.integrations.clients import parse_hook_input, render_decision
 
     origin = TriggerOrigin(client)
-    if origin == TriggerOrigin.CLI:
-        raise ValueError("Use `eng trigger` for command-line triggers")
+    if origin in {TriggerOrigin.CLI, TriggerOrigin.CI}:
+        raise ValueError("Use `eng trigger` or `eng ci-trigger` for non-client triggers")
     mode = TriggerMode(options.get("mode", TriggerMode.MANUAL.value))
     # Clients send UTF-8 regardless of the console code page (e.g. cp1254 on Windows).
     raw = sys.stdin.buffer.read().decode("utf-8", errors="replace")

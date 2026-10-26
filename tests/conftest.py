@@ -68,3 +68,39 @@ def repo(tmp_path: Path) -> Path:
     )
     commit(root)
     return root
+
+
+PLAN_CHECK = """\
+from pathlib import Path
+
+for path in sorted(Path('files').glob('*.txt')):
+    assert path.read_text() == path.stem.upper(), path.name
+assert not (Path('files/xa.txt').exists() and Path('files/xb.txt').exists()), 'xa+xb'
+"""
+
+
+@pytest.fixture
+def plan_repo(tmp_path: Path) -> Path:
+    """Repository whose one check validates every files/*.txt; xa.txt and xb.txt clash."""
+    root = tmp_path / "repository"
+    root.mkdir()
+    subprocess.run(["git", "init", "-b", "main", str(root)], check=True, capture_output=True)
+    (root / ".gitignore").write_text(
+        ".engineering/state/\n.engineering/worktrees/\n"
+        ".engineering/artifacts/\n.engineering/locks/\n__pycache__/\n",
+        encoding="utf-8",
+    )
+    (root / "files").mkdir()
+    (root / "files" / "seed.txt").write_text("SEED", encoding="utf-8")
+    (root / "check.py").write_text(PLAN_CHECK, encoding="utf-8")
+    directory = root / ".engineering"
+    directory.mkdir()
+    config = ProjectConfig(
+        name="plans",
+        checks=[Check(name="files", argv=["{python}", "check.py"], confirmed=True)],
+    )
+    (directory / "project.yaml").write_text(
+        yaml.safe_dump(config.model_dump(mode="json")), encoding="utf-8"
+    )
+    commit(root)
+    return root

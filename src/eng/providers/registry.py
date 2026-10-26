@@ -3,15 +3,17 @@
 import asyncio
 import math
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 
-from eng.core.models import Capabilities
+from eng.core.models import Capabilities, CommandProviderConfig
 from eng.execution.process import redact, run_process
 from eng.providers.base import Provider
 from eng.providers.claude import ClaudeProvider, claude_command
 from eng.providers.codex import CodexProvider, codex_command
+from eng.providers.command import CommandProvider, locate
 from eng.providers.fake import FakeProvider
 
 
@@ -20,6 +22,8 @@ class ProviderRegistration:
     name: str
     factory: Callable[[], Provider]
     command: Callable[[], list[str]] | None = None
+    # Probe-free availability for configured commands: locate, never execute.
+    locate: Callable[[], str | None] | None = None
 
 
 class ProviderRegistry:
@@ -56,6 +60,11 @@ class ProviderRegistry:
         async def inspect(name: str) -> tuple[str, dict[str, object]]:
             registration = self._registrations[name]
             result: dict[str, object] = {"authentication": "not_checked"}
+            if registration.locate is not None:
+                found = registration.locate()
+                result.update(available=found is not None, kind="configured_command")
+                result["executable"] = found
+                return name, result
             if registration.command is None:
                 result.update(available=True, kind="deterministic_fixture")
                 return name, result
@@ -77,10 +86,22 @@ class ProviderRegistry:
         return dict(await asyncio.gather(*(inspect(name) for name in self.names())))
 
 
-def build_registry(*, fake_changes: dict[str, str] | None = None) -> ProviderRegistry:
+def build_registry(
+    *,
+    fake_changes: dict[str, str] | None = None,
+    command_providers: Mapping[str, CommandProviderConfig] | None = None,
+) -> ProviderRegistry:
     changes = dict(fake_changes or {})
     registry = ProviderRegistry()
     registry.register(ProviderRegistration("fake", lambda: FakeProvider(dict(changes))))
     registry.register(ProviderRegistration("codex", CodexProvider, codex_command))
     registry.register(ProviderRegistration("claude", ClaudeProvider, claude_command))
+    for name, configured in (command_providers or {}).items():
+        registry.register(
+            ProviderRegistration(
+                name,
+                partial(CommandProvider, name, configured),
+                locate=partial(locate, configured),
+            )
+        )
     return registry

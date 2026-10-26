@@ -5,7 +5,9 @@ from pathlib import Path
 from typing import Any, Literal
 
 from eng.core.models import InvocationRecord, ProviderResult, Role, State, Task, identity, now
+from eng.core.plan import PlanRecord
 from eng.core.policy import TERMINAL, validate_transition
+from eng.core.refs import RefCheck
 from eng.core.triggers import CONTENT_DEDUP_SECONDS, TriggerOrigin, TriggerRecord
 from eng.execution.process import redact, redact_data
 
@@ -54,6 +56,18 @@ MIGRATIONS = [
     """,
     """
     ALTER TABLE invocations ADD COLUMN model TEXT;
+    """,
+    """
+    CREATE TABLE plans (id TEXT PRIMARY KEY, project TEXT NOT NULL REFERENCES projects(path),
+                        status TEXT NOT NULL, payload TEXT NOT NULL,
+                        cancel_requested INTEGER NOT NULL DEFAULT 0);
+    CREATE TABLE plan_events (sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                              plan_id TEXT NOT NULL REFERENCES plans(id),
+                              at TEXT NOT NULL, kind TEXT NOT NULL, payload TEXT NOT NULL);
+    CREATE INDEX plan_events_plan ON plan_events(plan_id, sequence);
+    CREATE TABLE ref_checks (id TEXT PRIMARY KEY, rev TEXT NOT NULL, commit_sha TEXT NOT NULL,
+                             origin TEXT NOT NULL, status TEXT NOT NULL,
+                             created_at TEXT NOT NULL, payload TEXT NOT NULL);
     """,
 ]
 
@@ -392,6 +406,97 @@ class Store:
             _trigger_record(row)
             for row in self.connection.execute(
                 "SELECT * FROM triggers ORDER BY rowid DESC LIMIT ?", (limit,)
+            )
+        ]
+
+    def create_plan(self, plan: PlanRecord) -> None:
+        with self.connection:
+            self.connection.execute(
+                "INSERT OR IGNORE INTO projects VALUES (?, ?)", (str(plan.project), plan.spec.name)
+            )
+            self.connection.execute(
+                "INSERT INTO plans VALUES (?, ?, ?, ?, 0)",
+                (plan.id, str(plan.project), plan.status.value, plan.model_dump_json()),
+            )
+            self._plan_event(plan.id, "created", {"nodes": [n.spec.id for n in plan.nodes]})
+
+    def load_plan(self, plan_id: str) -> PlanRecord:
+        row = self.connection.execute("SELECT * FROM plans WHERE id=?", (plan_id,)).fetchone()
+        if row is None:
+            raise ValueError(f"Plan not found: {plan_id}")
+        plan = PlanRecord.model_validate_json(row["payload"])
+        plan.cancel_requested = bool(row["cancel_requested"])
+        return plan
+
+    def list_plans(self) -> list[PlanRecord]:
+        return [
+            self.load_plan(row[0])
+            for row in self.connection.execute("SELECT id FROM plans ORDER BY rowid DESC")
+        ]
+
+    def save_plan(self, plan: PlanRecord) -> None:
+        """Persist the plan; the cancellation flag lives in its own column, never overwritten."""
+        plan.updated_at = now()
+        with self.connection:
+            self.connection.execute(
+                "UPDATE plans SET status=?, payload=? WHERE id=?",
+                (plan.status.value, plan.model_dump_json(), plan.id),
+            )
+
+    def cancel_plan(self, plan_id: str) -> bool:
+        plan = self.load_plan(plan_id)
+        if plan.status.value in {"PROMOTED", "CANCELLED", "FAILED"}:
+            return False
+        with self.connection:
+            self.connection.execute("UPDATE plans SET cancel_requested=1 WHERE id=?", (plan_id,))
+            self._plan_event(plan_id, "cancel_requested", {})
+        return True
+
+    def plan_cancelled(self, plan_id: str) -> bool:
+        row = self.connection.execute(
+            "SELECT cancel_requested FROM plans WHERE id=?", (plan_id,)
+        ).fetchone()
+        return bool(row and row[0])
+
+    def _plan_event(self, plan_id: str, kind: str, payload: dict[str, Any]) -> None:
+        self.connection.execute(
+            "INSERT INTO plan_events(plan_id,at,kind,payload) VALUES (?,?,?,?)",
+            (plan_id, now(), kind, json.dumps(redact_data(payload))),
+        )
+
+    def plan_event(self, plan_id: str, kind: str, payload: dict[str, Any]) -> None:
+        with self.connection:
+            self._plan_event(plan_id, kind, payload)
+
+    def plan_events(self, plan_id: str) -> list[dict[str, Any]]:
+        return [
+            dict(row)
+            for row in self.connection.execute(
+                "SELECT * FROM plan_events WHERE plan_id=? ORDER BY sequence", (plan_id,)
+            )
+        ]
+
+    def record_ref_check(self, check: RefCheck) -> None:
+        payload = redact_data(check.model_dump(mode="json"))
+        with self.connection:
+            self.connection.execute(
+                "INSERT INTO ref_checks VALUES (?,?,?,?,?,?,?)",
+                (
+                    check.id,
+                    check.rev,
+                    check.commit,
+                    check.origin,
+                    check.status,
+                    check.created_at,
+                    json.dumps(payload),
+                ),
+            )
+
+    def ref_checks(self, limit: int = 50) -> list[RefCheck]:
+        return [
+            RefCheck.model_validate_json(row["payload"])
+            for row in self.connection.execute(
+                "SELECT payload FROM ref_checks ORDER BY rowid DESC LIMIT ?", (limit,)
             )
         ]
 
