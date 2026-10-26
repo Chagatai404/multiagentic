@@ -101,7 +101,11 @@ def test_debugger_repairs_and_keeps_all_check_logs(repo: Path) -> None:
     assert provider.roles == [Role.ENGINEER, Role.DEBUGGER]
     assert len(result.repairs) == 1 and result.repairs[0].handoff is not None
     logs = list((repo / ".engineering/artifacts" / task.id).rglob("answer.log"))
-    assert len(logs) == 2 and "AssertionError" in logs[0].read_text()
+    # Directory enumeration order is platform dependent: the failing first round is
+    # the log whose parent is "checks"; the repaired round is "checks-2".
+    by_round = {log.parent.name: log for log in logs}
+    assert len(logs) == 2 and set(by_round) == {"checks", "checks-2"}
+    assert "AssertionError" in by_round["checks"].read_text()
     store.close()
 
 
