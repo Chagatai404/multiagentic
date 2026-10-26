@@ -28,13 +28,18 @@ With uv installed, `uv sync --extra dev --locked` uses the committed dependency 
 
 ## Quickstart: use eng from Claude Code or Codex
 
-Not yet on a package index; install from the repository (any Python 3.12+ environment,
-and Git 2.40+ if you will use plans):
+Not yet on a package index; install the `v1.0.0` release from the repository (any Python
+3.12+ environment, and Git 2.40+ if you will use plans):
 
 ```sh
-python -m pip install "git+https://github.com/Chagatai404/multiagentic@claude/practical-clarke-k49993"
+python -m pip install "git+https://github.com/Chagatai404/multiagentic@v1.0.0"
 eng --version
 ```
+
+To track the latest `main` instead, use `@main` in place of `@v1.0.0`. The Claude Code
+and Codex hooks run the Python interpreter that installed `eng` (`python -m
+eng.integrations.hook`), so keep that environment, or reinstall the hooks if you move it.
+The full client guide is in [docs/CLIENTS.md](docs/CLIENTS.md).
 
 **1. Prepare the project once** (a Git repository with at least one commit):
 
@@ -112,8 +117,13 @@ Things to know:
   live Claude Code or Codex session; try it on a scratch repository first.
 
 To let the agent also *see* eng's state, add the read-only MCP server:
-`claude mcp add eng -- eng mcp serve -p /path/to/your-repo`. For several agents at once
-see [Parallel plans](#parallel-plans-m6).
+
+```sh
+claude mcp add eng -- eng mcp serve -p /path/to/your-repo     # Claude Code
+codex mcp add eng -- eng mcp serve -p /path/to/your-repo      # Codex
+```
+
+For several agents at once see [Parallel plans](#parallel-plans-m6).
 
 ## Use in a project
 
@@ -384,7 +394,9 @@ was checked against the official MCP Python SDK client.
 ## Prompt hooks (opt-in)
 
 Claude Code and Codex can route engineering prompts to eng through their
-`UserPromptSubmit` hooks. Installation is explicit and project-local:
+`UserPromptSubmit` hooks. Installation is explicit and project-local. The step-by-step
+client guide, including Codex trust and troubleshooting, is in
+[docs/CLIENTS.md](docs/CLIENTS.md):
 
 ```powershell
 eng hooks install claude-code -p .            # writes .claude/settings.local.json
