@@ -482,7 +482,14 @@ def test_two_plans_share_the_project_wide_slot_cap(plan_repo: Path) -> None:
         thread.start()
     for thread in threads:
         thread.join(timeout=120)
-    assert {r.status for r in results.values()} == {PlanStatus.READY}
+    # On failure, report why: this has blocked once on a Windows CI runner (run 29).
+    diagnosis = [
+        (p.status, p.message, [(n.spec.id, n.status, n.message) for n in p.nodes],
+         [(e["kind"], e["payload"]) for e in store.plan_events(p.id)][-8:])
+        for p in results.values()
+        if p.status != PlanStatus.READY
+    ]  # fmt: skip
+    assert len(results) == 2 and not diagnosis, diagnosis
     assert tracker.peak <= 3  # two coordinators, one shared cap
     merged = sorted(
         (e for p in (first, second) for e in store.plan_events(p.id)), key=lambda e: e["at"]
