@@ -19,7 +19,14 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from eng.core.triggers import TriggerDecision, TriggerEnvelope, TriggerMode
 
-DEFAULT_PROVIDERS = {"claude-code": "claude", "codex": "codex", "cli": None, "ci": None}
+DEFAULT_PROVIDERS = {
+    "claude-code": "claude",
+    "codex": "codex",
+    "gemini": None,
+    "cursor": None,
+    "cli": None,
+    "ci": None,
+}
 ACCEPTANCE = [
     "All configured required checks pass",
     "The change does what the routed request asks, without unrelated edits",
@@ -39,7 +46,7 @@ def submit(
     environ: Mapping[str, str] | None = None,
 ) -> tuple["TriggerDecision", Path | None]:
     """Route one trigger: route -> checks -> claim -> create task -> spawn -> started."""
-    from eng.core.models import ClassificationOverrides, Risk, Task, TaskSpec, now
+    from eng.core.models import ClassificationOverrides, Complexity, Risk, Task, TaskSpec, now
     from eng.core.triggers import (
         TriggerAction,
         TriggerDecision,
@@ -68,6 +75,8 @@ def submit(
     if project is not None and root != project.resolve():
         # A nested repository, submodule or other worktree is not the installed project.
         return bypass("Prompt is outside the project this hook was installed for")
+    if project is None and not (root / ".engineering" / "project.yaml").is_file():
+        return bypass("Project is not initialized; run eng init and confirm its required checks")
     try:
         git(root, "check-ignore", "--quiet", ".engineering/state/eng.sqlite3")
     except ValueError:
@@ -84,13 +93,16 @@ def submit(
     budgets = config.budgets.model_copy(deep=True)
     if decision.full_verification:
         budgets.model_calls = max(budgets.model_calls, 2)  # room for independent review
+    if decision.multi_agent:
+        budgets.model_calls = max(budgets.model_calls, 3)  # planner, engineer, reviewer
     spec = TaskSpec(
         description=decision.description,
         acceptance=ACCEPTANCE,
         provider=selected,
         budgets=budgets,
         classification_overrides=ClassificationOverrides(
-            risk=Risk.MEDIUM if decision.full_verification else None
+            risk=Risk.MEDIUM if decision.full_verification else None,
+            complexity=Complexity.COMPLEX if decision.multi_agent else None,
         ),
     )
     key, content_keyed = idempotency_key(envelope)
@@ -202,8 +214,11 @@ def main(arguments: list[str] | None = None) -> int:
         output = _run(client, options)
     except BaseException as error:  # noqa: BLE001 - a hook must never block on its own failure
         # systemMessage is understood by both clients; built without eng imports.
+        warning = f"eng hook did not route this prompt: {_message(error)}"
         output = json.dumps(
-            {"systemMessage": f"eng hook did not route this prompt: {_message(error)}"}
+            {"continue": True, "user_message": warning}
+            if client == "cursor"
+            else {"systemMessage": warning}
         )
     if output:
         sys.stdout.buffer.write(output.encode("utf-8", errors="replace"))

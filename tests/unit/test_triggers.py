@@ -122,3 +122,44 @@ def test_full_mode_sets_full_verification_on_routed_work() -> None:
     assert adaptive.full_verification is False
     assert full.action == TriggerAction.ROUTE and full.full_verification is True
     assert explicit.full_verification is True
+
+
+@pytest.mark.parametrize("mode", [TriggerMode.KEYWORDS, TriggerMode.ADAPTIVE, TriggerMode.FULL])
+@pytest.mark.parametrize(
+    "keyword", ["multi agent", "multi-agent", "multiagent", "MULTI AGENTS", "multiple agents"]
+)
+def test_keyword_request_routes_without_prefix(keyword: str, mode: TriggerMode) -> None:
+    prompt = f"Can you fix the parser with {keyword}?"
+    decision = route_trigger(envelope(prompt), mode, reentrant=False)
+    assert decision.action == TriggerAction.ROUTE
+    assert decision.description == prompt
+    assert decision.multi_agent is True
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "Fix the parser",
+        "What is a multi-agent system?",
+        "Explain multiple agents",
+        "/multi-agent fix the parser",
+        "Fix the multiagency parser",
+        "Fix multiple agentic modules",
+        "",
+    ],
+)
+def test_keyword_mode_passes_other_prompts_through(prompt: str) -> None:
+    decision = route_trigger(envelope(prompt), TriggerMode.KEYWORDS, reentrant=False)
+    assert decision.action == TriggerAction.BYPASS
+
+
+def test_keywords_respect_manual_mode_and_recursion_guard() -> None:
+    prompt = "Use multiple agents to fix the parser"
+    assert route_trigger(envelope(prompt), TriggerMode.MANUAL, reentrant=False).action == (
+        TriggerAction.BYPASS
+    )
+    assert route_trigger(envelope(prompt), TriggerMode.KEYWORDS, reentrant=True).action == (
+        TriggerAction.REENTRANT
+    )
+    decision = route_trigger(envelope(f"eng: {prompt}"), TriggerMode.MANUAL, reentrant=False)
+    assert decision.action == TriggerAction.ROUTE and decision.multi_agent

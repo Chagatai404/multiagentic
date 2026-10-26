@@ -88,13 +88,18 @@ Every trigger is a normalized `TriggerEnvelope` (origin, session, client turn id
 cwd, prompt, receive time). `core/triggers.py` is pure. In `route_trigger`, an
 `ENG_ACTIVE` environment is reentrant and never routes; otherwise an `eng:` prefix
 routes in every mode. Slash commands, manual-mode prose, M3 questions and
-ambiguous prompts bypass. Adaptive and full modes also route high-confidence
+ambiguous prompts bypass. The `keywords` mode adds bounded, case-insensitive
+multi agent / multi-agent / multiagent / multiple agents phrases in coding requests.
+Adaptive and full modes include keyword routing and also route high-confidence
 imperative change requests; full raises the risk floor to medium so review runs.
+Keyword requests set the complex classification floor and a minimum of three model
+calls, selecting planner, engineer, deterministic checks and reviewer. This is the
+sequential role workflow; parallel plans still require their separate human approval.
 Idempotency keys use the client's prompt/turn id; without one a prompt digest
 deduplicates for 120 seconds only. SQLite migration 3 stores trigger records with
 digests and redacted envelopes; `claim_trigger` is atomic under `BEGIN IMMEDIATE`.
 
-`integrations/hook.py` is the only client-facing entry point. Both clients block a
+`integrations/hook.py` is the client-facing entry point. Supported clients block a
 prompt on exit code 2, so it parses arguments leniently, fails open (exit 0 with a
 `systemMessage`) on every error, and prints one JSON object or nothing. Order per
 routed prompt: installed-project binding, ignored runtime state, clean checkout and
@@ -103,11 +108,26 @@ started, then block the prompt with a reason naming the task. Only a started cla
 blocks a redelivery; failed or interrupted claims let the prompt through. Installers
 add their per-user files to `.git/info/exclude` so they never dirty the checkout. The runner holds none of the hook's pipes (stdin null, output appended to
 `runner.log`); Windows uses `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP` and tries
-`CREATE_BREAKAWAY_FROM_JOB`, POSIX a new session. Installers write only
-`<project>/.claude/settings.local.json` (exec-form `args`, no shell) or
-`<project>/.codex/hooks.json` (`command` plus `commandWindows`), preserve other
+`CREATE_BREAKAWAY_FROM_JOB`, POSIX a new session. Installers support project-bound
+hooks and unbound user-wide hooks which discover the repository from client context;
+user-wide hooks silently bypass unconfigured repositories. Claude Code uses
+`.claude/settings.local.json` in projects or `.claude/settings.json` for the user
+(exec-form `args`, no shell); Codex uses `.codex/hooks.json` (`command` plus
+`commandWindows`). Gemini uses `.gemini/settings.json` grouped `BeforeAgent` hooks
+with millisecond timeouts and `decision: deny` output. Cursor uses `.cursor/hooks.json`
+flat `beforeSubmitPrompt` entries with `continue: false` output; its single workspace
+root and conversation/generation IDs are normalized. Multi-root Cursor workspaces fail
+open. Installers preserve other
 entries, write atomically and keep one backup. Codex runs the hook only after the
 user trusts it with `/hooks`; eng never bypasses hook trust.
+
+`eng install` defaults to user scope and keyword routing, installs all supported hooks
+and copies the bundled workflow skill into shared/Claude/Copilot skill roots. Project
+scope uses local shared/Claude/GitHub roots; `--skill-dir` supports future clients.
+`integrations/skills.py` replaces/removes only marked eng skill files. Unknown clients
+get skill/CLI interoperability, without a claim of deterministic hook support. Client
+hook support is separate from engine provider adapters: Gemini/Cursor use project
+provider configuration, whereas Claude/Codex hooks select their own provider by default.
 
 ## Security policy
 

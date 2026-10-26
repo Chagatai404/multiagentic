@@ -1,224 +1,176 @@
-# Using eng from Claude Code and Codex
+# Client installation and prompt routing
 
-This guide covers installing `eng` and using it from Claude Code and Codex. The
-[README](../README.md) has the short version; the design is in
-[ARCHITECTURE](../ARCHITECTURE.md).
+The [README quickstart](../README.md#quickstart-install-once-for-your-user) covers
+package installation and project checks. The installer defaults to the current OS user:
 
-> **Status.** The hook, MCP and CLI flows are tested with emulated client input and real
-> subprocesses. Firing inside a live Claude Code or Codex session, and live model editing,
-> have not been validated on this project. Try a scratch repository first. See
-> [release known limitations](RELEASE.md#known-limitations-read-before-relying-on-it).
-
-## Requirements
-
-- Python 3.12 or newer, and Git 2.40 or newer if you will use plans.
-- A Git repository with at least one commit, and a clean checkout whenever eng routes a
-  prompt.
-- The client you use installed and logged in: `claude` (baseline Claude Code 2.1.301)
-  and/or `codex` (baseline Codex CLI 0.149.0).
-- Node.js and npm only if your configured checks need them.
-
-## 1. Install eng
-
-eng is not on a package index yet. Install the `v1.0.0` release from the repository:
-
-```bash
-python -m pip install "git+https://github.com/Chagatai404/multiagentic@v1.0.0"
-eng --version
-eng doctor
+```sh
+eng install
+eng hooks status claude-code --scope user
+eng hooks status codex --scope user
+eng hooks status gemini --scope user
+eng hooks status cursor --scope user
 ```
 
-`eng doctor` reports executable versions only. It does not check authentication or model
-access; confirm those in the client itself.
+No repository is needed to install user-wide. The installer writes native hooks for all
+supported clients, even if a client is installed later. It also copies the portable
+`multiagentic-engineering` skill into `~/.agents/skills/`, `~/.claude/skills/` and
+`~/.copilot/skills/`. These are local files; remote hosts and other accounts need their
+own setup. `CLAUDE_CONFIG_DIR` and `CODEX_HOME` redirect their respective client settings.
 
-To use the latest `main`, replace `@v1.0.0` with `@main`.
+Restart clients after installation. In Codex, open `/hooks` and review/trust the eng
+entry; changed hook definitions need review again. No trust or permission bypass is
+installed. In Copilot, `/skills reload` refreshes skills and `/multiagentic-engineering`
+selects the workflow explicitly. Otherwise skill selection follows the client's normal
+model-driven discovery. Gemini, Cursor and other skills-compatible clients can discover
+the shared `~/.agents/skills/` copy. Unknown clients receive no fabricated native hook.
 
-The hooks run the Python interpreter that installed eng (`python -m
-eng.integrations.hook`). Keep that environment in place. If you move or recreate it,
-reinstall the hooks.
+## Project-wide installation
 
-## 2. Prepare each project (once per repository)
-
-```bash
-cd your-repo
-eng init -p .
+```sh
+eng install --scope project -p /absolute/path/to/repo
 ```
 
-Open `.engineering/project.yaml` and confirm a check that proves your code works:
+This installs hooks and skills under that repository, bound to its root. Skills go in
+`.agents/skills/`, `.claude/skills/` and `.github/skills/`. Generated files are excluded
+through `.git/info/exclude`, keeping the checkout clean. Installation neither initializes
+a project nor confirms checks. Each repository still needs `eng init`, meaningful
+confirmed required checks and committed configuration.
 
-```yaml
-checks:
-  - name: tests
-    argv: ['{python}', '-m', 'pytest', '-q']
-    timeout_seconds: 60
-    required: true
-    confirmed: true
+Existing per-client commands retain project scope and manual routing by default:
+
+```sh
+eng hooks install claude-code -p . --mode keywords
+eng hooks install codex -p . --mode keywords
+eng hooks install gemini -p . --mode keywords
+eng hooks install cursor -p . --mode keywords
+eng hooks uninstall codex -p .
 ```
 
-Discovered commands start as `confirmed: false`. Without a confirmed required check,
-nothing can complete. Commit the configuration:
+Use `--scope user` with those commands to target the user's settings. Top-level `eng
+install` defaults to `--scope user --mode keywords`, and accepts `--client NAME` to
+install one native hook. It always installs the portable skills as well.
 
-```bash
-git add .engineering
-git commit -m "Add eng configuration"
-```
+Settings are updated atomically with one `.eng-backup` copy of existing settings. Other
+hooks and configuration keys are retained. A skill with the same directory name but
+without eng's ownership marker is never overwritten or removed. Additional files in a
+managed skill directory are retained during uninstall.
 
-`.engineering/state/` must stay git-ignored; `eng init` writes that rule.
-
-## 3. Install the prompt hook for your client
-
-Routing is opt-in and project-local. Install only for the client you use.
-
-### Claude Code
-
-```bash
-eng hooks install claude-code -p .
-```
-
-This writes `.claude/settings.local.json`. Other hooks in that file are kept. Restart
-Claude Code if it was already open.
-
-### Codex
-
-```bash
-eng hooks install codex -p .
-```
-
-This writes `.codex/hooks.json`. Start Codex in the project, open `/hooks`, and **trust
-the eng entry**. Codex ignores untrusted hooks. Restart Codex if it was already open.
-
-### Options and check
-
-```bash
-eng hooks status claude-code -p .     # or: codex
-```
-
-`eng hooks install` also accepts:
-
-- `--mode manual|adaptive|full` (default `manual`): see [Routing modes](#routing-modes).
-- `--provider NAME`: run routed work with a provider other than the client's own, for
-  example a `command_providers` entry in `project.yaml`.
-
-The installer keeps your checkout clean by adding its own files to `.git/info/exclude`.
-
-## 4. Use it from the client
-
-Start a prompt with `eng:`:
-
-```text
-eng: fix add() so add(2, 3) returns 5
-```
-
-The client does not answer the prompt. It shows a short message such as
-`eng started task 13683b32... for this request`. The agent then works in a separate Git
-worktree in the background. Your checkout is not touched.
-
-Follow the task from the client or a terminal:
-
-```bash
-eng status                 # all tasks
-eng status TASK_ID         # state, checks, events, worktree path
-eng usage TASK_ID          # reported token and cost coverage
-```
-
-When the task reaches `COMPLETED`, every required check has passed. Review the diff in
-`.engineering/worktrees/TASK_ID` and apply it yourself. eng never merges or pushes.
-
-If the task ends `PAUSED` or `BLOCKED`, `eng status TASK_ID` says why. It is usually the
-model-call budget, an approval, or a failing check:
-
-```bash
-eng resume TASK_ID --extend-model-calls 2
-eng resume TASK_ID --approve-high-risk     # high-risk work only
-```
-
-### Routing modes
+## Routing modes
 
 | Mode | Routes |
 |---|---|
-| `manual` (default) | Only prompts that start with `eng:` |
-| `adaptive` | Also clearly imperative change requests, such as "Fix the failing parser test" |
-| `full` | Adaptive routing, plus an independent review of routed work |
+| `manual` | Only an `eng:` prefix |
+| `keywords` | `eng:` or multi agent / multi-agent / multiagent / multiple agents |
+| `adaptive` | Keywords plus high-confidence imperative change requests |
+| `full` | Adaptive routing with a review floor |
 
-Questions, slash commands and ambiguous prose always pass through to the client.
+Keyword matching is case-insensitive, bounded to words, includes plural forms and works
+anywhere in a coding request. Questions, slash commands and ambiguous non-keyword prompts
+pass through. An explicit `eng:` request takes precedence, including for questions.
 
-### Budget
+Keyword routing requests complex classification, which runs planner, engineer, checks
+and independent reviewer, with at least three model calls available. Normal task and
+provider timeouts and high-risk approval requirements still apply. Repairs may need
+additional budget. The roles are sequential; parallel plans require an explicit DAG and
+human plan approval. No approval or promotion is performed by the hook or skill.
 
-Routed tasks use `budgets.model_calls` from `project.yaml`, which defaults to **1**. Medium,
-high-risk or complex requests need a planner or reviewer call. Raise the budget if they
-pause:
+Claude Code hooks select the Claude provider, and Codex hooks select Codex. Gemini and
+Cursor hooks and the portable skill use `provider` in `.engineering/project.yaml`,
+defaulting to Codex. To override a native hook's provider:
 
-```yaml
-budgets: {model_calls: 3, wall_seconds: 900}
+```sh
+eng hooks install gemini --scope user --mode keywords --provider claude
 ```
 
-### What the hook does when something is wrong
+Client integration is separate from model-provider support. Gemini, Cursor and Copilot
+are not built-in engine model providers; a compatible command provider is another option.
 
-If routing cannot run (dirty checkout, unknown provider, state directory not ignored), the
-hook lets the prompt through with a warning. It never traps your prompt. It also never
-routes from inside an eng-launched agent.
+## Hook protocols and safety
 
-## 5. Give the client read-only access to eng state (optional)
+| Client | User settings | Event | Block response after runner starts |
+|---|---|---|---|
+| Claude Code | `~/.claude/settings.json` | `UserPromptSubmit` | `decision: block` |
+| Codex | `~/.codex/hooks.json` | `UserPromptSubmit` | `decision: block` |
+| Gemini CLI | `~/.gemini/settings.json` | `BeforeAgent` | `decision: deny` |
+| Cursor | `~/.cursor/hooks.json` | `beforeSubmitPrompt` | `continue: false` |
 
-The MCP server exposes eng state to the agent without giving it any way to approve or
-change work:
+Claude uses exec-form `command`/`args`. Codex uses `command` and `commandWindows`.
+Gemini uses grouped hooks and a millisecond timeout; Cursor uses a flat event array and a
+seconds timeout. Gemini/Cursor command strings are generated for the installing OS;
+rerun installation on another OS rather than copying settings across platforms.
 
-```bash
-claude mcp add eng -- eng mcp serve -p /absolute/path/to/your-repo    # Claude Code
-codex mcp add eng -- eng mcp serve -p /absolute/path/to/your-repo     # Codex
+Cursor's `conversation_id`/`generation_id` become session/turn identities. Routing
+requires exactly one `workspace_roots` entry; multiple-root workspaces pass through to
+avoid choosing the wrong repository. Other clients use `cwd` and available session/turn
+IDs. Without a turn ID, identical prompt content deduplicates for 120 seconds.
+
+Hook input is JSON on stdin; output is one JSON object or silence. Every execution failure
+exits zero and lets the original prompt through. A successfully started task blocks the
+original prompt, with a task ID and status command. `ENG_ACTIVE` prevents recursion.
+Unconfigured repositories silently bypass user-wide hooks. Configured repositories still
+require ignored runtime state and a clean checkout. Existing trigger claims deduplicate
+repeated delivery; failed or interrupted claims never trap the prompt.
+
+The user-wide hook discovers the repository from each prompt's client context rather than
+pinning the repository where installation ran. Project hooks pin their installed root.
+
+Official protocol references:
+
+- [Claude Code hooks](https://code.claude.com/docs/en/hooks)
+- [Codex hooks and trust](https://learn.chatgpt.com/docs/hooks)
+- [Gemini CLI hook reference](https://geminicli.com/docs/hooks/reference/)
+- [Cursor hooks](https://cursor.com/docs/hooks)
+- [Copilot CLI skills](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-skills)
+
+## Future clients and direct CLI use
+
+Shared-skills clients can discover the skill after they are installed. For a different
+skills root, install a copy explicitly:
+
+```sh
+eng install --skill-dir /path/to/new-client/skills
+eng uninstall --skill-dir /path/to/new-client/skills
 ```
 
-Read-only tools: `eng_tasks`, `eng_task_status`, `eng_usage`, `eng_plans`,
-`eng_plan_status`, `eng_triggers`, `eng_refs`. The server has no tool to approve, resume,
-cancel, integrate or promote. Approvals stay human CLI actions.
+The option is repeatable. It adds the skill, not a native hook. A client without skills
+can submit a request through `eng trigger`, preserving the entire prompt as one argv
+argument and keeping shell interpolation out of user input:
 
-`--allow-submit` adds `eng_submit`, which starts one task and may be billable. Enable it
-only when you intend that.
-
-To remove the server:
-
-```bash
-claude mcp remove eng
-codex mcp remove eng
+```sh
+eng trigger "Fix the parser with multiple agents" --mode keywords -p .
+eng run "Fix addition" --accept "Addition returns the sum" --provider claude
 ```
 
-## 6. Use eng without a client hook
+Use `eng status TASK_ID` and `eng usage TASK_ID` to inspect work. The optional read-only
+MCP server provides the same task state to a client:
 
-These run the same workflow from a shell, with no hook installed:
-
-```bash
-eng run 'Fix the addition function' --accept 'Addition returns the sum' --provider claude
-eng run 'Fix the addition function' --accept 'Addition returns the sum' --provider codex
-eng trigger "eng: fix add()" -p .        # same normalized trigger the hook sends
-eng triggers -p .                         # trigger records (digests, never raw prompts)
+```sh
+claude mcp add eng -- eng mcp serve -p /absolute/path/to/repo
+codex mcp add eng -- eng mcp serve -p /absolute/path/to/repo
 ```
 
-`--accept` is the acceptance statement the task is judged against. Pass `--model` to
-override the provider default, and `--model-calls` to set the budget for that task.
+The server exposes no approval or promotion tools. `--allow-submit` is a separate opt-in
+for task submission and may result in billable model calls.
 
-## 7. Troubleshooting
+## Troubleshooting and removal
 
 | Symptom | Check |
 |---|---|
-| Prompt answered by the client, not eng | `eng hooks status claude-code -p .` (or `codex`). Confirm the checkout is clean and `.engineering/state/` is ignored. |
-| Codex ignores the eng hook | Open `/hooks` in Codex and trust the eng entry. |
-| Hook fails after moving the repo or venv | Reinstall: `eng hooks uninstall ...` then `eng hooks install ...`. |
-| Task stays `PAUSED` | `eng status TASK_ID` for the reason. Usually `eng resume TASK_ID --extend-model-calls N`. |
-| Task is `BLOCKED` | A required check failed, errored or was unavailable. Fix the check or environment, then `eng verify TASK_ID`. |
+| Client answers a keyword prompt | Check `eng hooks status CLIENT --scope user`, restart the client and confirm project setup. |
+| Codex skips eng | Open `/hooks` and trust its current definition. |
+| Ordinary prompts are unexpectedly routed | Reinstall with `eng install --mode keywords`; inspect project hooks for adaptive/full mode too. |
+| Hook fails after a tool environment moves | Rerun `eng install` using the persistent replacement environment. |
+| Task pauses or blocks | Inspect `eng status TASK_ID`; extend budget or resolve the reported check/environment issue. |
+| Copilot does not select the skill | Reload skills and explicitly use `/multiagentic-engineering`. |
 
-## 8. Uninstall
-
-```bash
-eng hooks uninstall claude-code -p .     # or: codex
-claude mcp remove eng                    # or: codex mcp remove eng
+```sh
+eng uninstall
+eng uninstall --scope project -p /absolute/path/to/repo
 ```
 
-Uninstall removes only eng's own hook entries. Other hooks in those files are preserved.
-Worktrees and `eng/plan/*` branches are not removed automatically. Delete them yourself
-when you are done with them.
+User and project installations are independent; removing one does not remove the other.
+Repeat `--skill-dir` for additional copies. Uninstall removes only eng entries and managed
+skill files. It retains backups, unrelated hooks, project state and worktrees.
 
-## Related
-
-- [README](../README.md): install, quickstart, plans, safety.
-- [ARCHITECTURE](../ARCHITECTURE.md): subsystem boundaries.
-- [Release notes and known limitations](RELEASE.md).
+Validation uses emulated client payloads and real subprocesses with offline providers.
+It does not establish live hook delivery or successful paid provider editing in a client.

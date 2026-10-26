@@ -1,16 +1,16 @@
 {
-  "milestone": "M6 / 1.0.0",
-  "branch": "claude/practical-clarke-k49993",
-  "base_commit": "325d9aa",
+  "milestone": "M6 / 1.0.0 + user-wide installer",
+  "branch": "agent/codex/user-wide-install",
+  "base_commit": "8c33d3c",
   "active_agent": "none",
-  "phase": "release_candidate_verified_offline",
-  "note": "M5 close-out and M6 completed by Claude on top of agent/codex/m5-observability; design in docs/M6_PLAN.md, evidence in docs/VALIDATION.md, release notes in docs/RELEASE.md.",
+  "phase": "user_install_verified_offline",
+  "note": "Codex added keyword routing, user/project installers, Gemini/Cursor hooks and portable skills; user-wide setup installed at the owner request. README and docs/CLIENTS.md describe setup. Live client delivery remains unverified.",
   "owners": {},
   "rules": [
     "No paid model calls without owner action",
-    "No real-client hook install",
+    "User-wide hook installation authorized by owner; client hook trust stays human",
     "No automatic push",
     "Approvals and promotion are human CLI actions only"
   ],
-  "verification": "See docs/VALIDATION.md (M5 close-out and M6) for the final offline results; live provider, live hook and CI-service validation remain owner actions."
+  "verification": "598 passed, 2 skipped on Windows/Python 3.14; ruff, mypy, package build, skill validation and installed-wheel fake-provider smoke passed. See docs/VALIDATION.md."
 }

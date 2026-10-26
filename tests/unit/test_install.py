@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 
 from eng.integrations.clients import hook_command
-from eng.integrations.install import hook_status, install_hook, uninstall_hook
+from eng.integrations.install import InstallScope, hook_status, install_hook, uninstall_hook
 
 CLAUDE_FILE = Path(".claude") / "settings.local.json"
 CODEX_FILE = Path(".codex") / "hooks.json"
@@ -203,3 +203,88 @@ def test_unknown_client_is_rejected(tmp_path: Path) -> None:
     with pytest.raises(ValueError):
         install_hook("cli", tmp_path, mode="manual", provider="claude")
     assert not any(tmp_path.iterdir())
+
+
+@pytest.mark.parametrize(
+    ("client", "variable", "filename"),
+    [("claude-code", "CLAUDE_CONFIG_DIR", "settings.json"), ("codex", "CODEX_HOME", "hooks.json")],
+)
+def test_user_hook_is_unbound_preserves_settings_and_is_reversible(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, client: str, variable: str, filename: str
+) -> None:
+    directory = tmp_path / "client config with spaces"
+    directory.mkdir()
+    monkeypatch.setenv(variable, str(directory))
+    path = directory / filename
+    original = json.dumps(_existing_settings())
+    path.write_text(original, encoding="utf-8")
+    result = install_hook(client, mode="keywords", provider="fake", scope=InstallScope.USER)
+    assert result["path"] == str(path)
+    assert _read(path)["permissions"] == _existing_settings()["permissions"]
+    entry = _read(path)["hooks"]["UserPromptSubmit"][-1]["hooks"][0]
+    assert "--project" not in json.dumps(entry)
+    assert "keywords" in json.dumps(entry)
+    assert not install_hook(client, mode="keywords", provider="fake", scope=InstallScope.USER)[
+        "changed"
+    ]
+    assert hook_status(client, scope=InstallScope.USER)["installed"]
+    assert uninstall_hook(client, scope=InstallScope.USER)["changed"]
+    assert _read(path) == _existing_settings()
+    assert path.with_name(path.name + ".eng-backup").read_text(encoding="utf-8") == original
+
+
+@pytest.mark.parametrize("client", ["claude-code", "codex"])
+def test_user_and_project_hooks_are_independent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, client: str
+) -> None:
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "user-claude"))
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "user-codex"))
+    project = tmp_path / "project"
+    install_hook(client, mode="keywords", provider="fake", scope=InstallScope.USER)
+    install_hook(client, project, mode="manual", provider="fake")
+    uninstall_hook(client, project)
+    assert hook_status(client, scope=InstallScope.USER)["installed"]
+    assert not hook_status(client, project)["installed"]
+
+
+def test_default_user_paths_respect_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    monkeypatch.delenv("CODEX_HOME", raising=False)
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    assert hook_status("claude-code", scope=InstallScope.USER)["path"] == str(
+        tmp_path / ".claude" / "settings.json"
+    )
+    assert hook_status("codex", scope=InstallScope.USER)["path"] == str(
+        tmp_path / ".codex" / "hooks.json"
+    )
+
+
+@pytest.mark.parametrize(
+    ("client", "event", "filename"),
+    [("gemini", "BeforeAgent", "settings.json"), ("cursor", "beforeSubmitPrompt", "hooks.json")],
+)
+def test_additional_client_hook_layout_and_preservation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, client: str, event: str, filename: str
+) -> None:
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    path = tmp_path / f".{client}" / filename
+    path.parent.mkdir()
+    other = {"command": "other-tool", "type": "command"}
+    groups = [other] if client == "cursor" else [{"hooks": [other]}]
+    original = {"version": 1, "hooks": {event: groups}, "unrelated": {"keep": True}}
+    path.write_text(json.dumps(original), encoding="utf-8")
+    install_hook(client, mode="keywords", provider=None, scope=InstallScope.USER)
+    data = _read(path)
+    assert data["unrelated"] == original["unrelated"]
+    assert data["hooks"][event][0] == groups[0]
+    entry = data["hooks"][event][-1]
+    if client == "gemini":
+        entry = entry["hooks"][0]
+        assert entry["timeout"] == 20000
+    assert "--provider" not in entry["command"]  # use project's configured provider
+    assert hook_status(client, scope=InstallScope.USER)["mode"] == "keywords"
+    assert not install_hook(client, mode="keywords", provider=None, scope=InstallScope.USER)[
+        "changed"
+    ]
+    uninstall_hook(client, scope=InstallScope.USER)
+    assert _read(path) == original

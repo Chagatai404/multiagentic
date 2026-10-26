@@ -365,3 +365,45 @@ third-party command provider; Windows runtime behaviour beyond what the CI suite
 (it passes the full offline suite, but only with emulated providers); load beyond three
 concurrent nodes by design; and scheduling performance (no benchmark of M6
 was made, so no speed or cost claim is made).
+
+
+## User-wide installation and keyword routing (2026-10-26)
+
+Windows / Python 3.14, on `agent/codex/user-wide-install`, based on `8c33d3c`:
+
+- Full offline suite: **598 passed, 2 skipped** in 890.23 seconds. Skips: optional
+  MCP SDK compatibility test (`mcp` not installed), and the opt-in paid Codex smoke test.
+- Focused client suite before the final installer preflight change: 95 unit tests and
+  26 hook integration tests passed. The full suite above includes that final change.
+- Ruff and strict mypy passed (52 source files); bundled skill validation passed.
+- Wheel and source distribution built successfully. Both contain the bundled workflow
+  skill and neither contains the local build cache.
+- The built wheel was installed into a persistent user-wide uv tool environment.
+  `eng install` installed all four native hooks and shared/Claude/Copilot skills.
+  A second installation reported `changed: false` for every hook and skill.
+- An installed-wheel CLI keyword request in a disposable repository completed with
+  planner, engineer, passing required checks and independent reviewer: exactly three
+  deterministic fake-provider invocations.
+- The actual generated user hook commands for Claude Code, Codex, Gemini and Cursor
+  were executed with emulated client payloads and an explicit fake-provider override.
+  All returned their client-specific blocking response, and all four resulting tasks
+  completed with three fake invocations and passing required checks.
+- Unit coverage includes user/project scope separation, default and overridden client
+  homes, preserving unrelated configuration, backups, idempotent install/remove, skill
+  ownership/collision handling, custom skill directories, malformed-settings preflight,
+  bounded keywords, question/slash-command bypass and recursion prevention. Integration
+  coverage includes keyword routing/deduplication for all four clients and unbound
+  routing across two independently configured repositories.
+
+The full suite and detached-process tests ran with normal Windows subprocess permissions.
+Inside the desktop sandbox, default TEMP writes were denied and a detached-hook test
+stalled; rerunning outside that sandbox passed. No product-code workaround or permission
+bypass was added for that environment restriction.
+
+**Not established:** actual hook delivery inside any live client, successful live model
+editing, model authentication or real CI-service delivery. Installing settings is separate
+from client hook activation; Codex still requires the user to review/trust `/hooks`.
+Copilot and unknown skills-compatible clients use model-selected skill discovery, without
+an assertion of deterministic prompt interception. Gemini/Cursor hook integration does
+not add those products as engine model-provider adapters. Parallel DAG plans and human
+approval/promotion boundaries remain unchanged.

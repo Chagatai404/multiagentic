@@ -310,3 +310,51 @@ def test_start_refuses_started_tasks_and_nested_execution(repo: Path) -> None:
     assert again.exit_code == 2 and "already started" in again.output
     nested = runner.invoke(app, ["start", task_id, "-p", str(repo)], env={"ENG_ACTIVE": "1"})
     assert nested.exit_code == 2 and "Nested" in nested.output
+
+
+@pytest.mark.parametrize("client", ["claude-code", "codex", "gemini", "cursor"])
+def test_keyword_hook_creates_planned_reviewed_workflow(repo: Path, client: str) -> None:
+    payload = claude_payload(repo, "Please use multiple agents to fix the answer file")
+    if client == "cursor":
+        payload = {
+            "prompt": payload["prompt"],
+            "workspace_roots": [str(repo)],
+            "conversation_id": "s-1",
+            "generation_id": "p-1",
+        }
+    code, output, _ = hook(repo, payload, "--mode", "keywords", client=client)
+    result = json.loads(output)
+    assert code == 0
+    if client == "cursor":
+        assert result["continue"] is False
+    else:
+        assert result["decision"] == ("deny" if client == "gemini" else "block")
+    [task] = tasks(repo)
+    assert task.spec.budgets.model_calls >= 3
+    assert task.spec.classification_overrides.complexity == "complex"
+    # Redelivery cannot create another task, including while the runner is active.
+    hook(repo, payload, "--mode", "keywords", client=client)
+    assert len(tasks(repo)) == 1
+    wait_for_runner(repo, task.id)
+
+
+def test_user_hook_routes_two_projects_without_binding(repo: Path, tmp_path: Path) -> None:
+    from eng.integrations.clients import hook_command
+
+    other = tmp_path / "second-repository"
+    subprocess.run(["git", "clone", str(repo), str(other)], check=True, capture_output=True)
+    # Clone carries the committed fixture; both repositories have their own state.
+    argv = hook_command("claude-code", mode="keywords", provider="fake")
+    for root in (repo, other):
+        payload = claude_payload(root, "Fix the answer file using multi-agent workflow")
+        process = subprocess.run(
+            argv,
+            input=json.dumps(payload).encode(),
+            capture_output=True,
+            cwd=root,
+            timeout=60,
+            check=False,
+        )
+        assert process.returncode == 0 and json.loads(process.stdout)["decision"] == "block"
+        [task] = tasks(root)
+        wait_for_runner(root, task.id)

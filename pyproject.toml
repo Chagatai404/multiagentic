@@ -26,7 +26,7 @@ classifiers = [
 dependencies = ["pydantic>=2.10,<3", "typer>=0.16,<1", "PyYAML>=6.0.2,<7"]
 
 [project.urls]
-Repository = "https://github.com/Chagatai404/multiagentic"
+Repository = "https://github.com/Chagatai404/multiagentic-engineering"
 
 [project.optional-dependencies]
 dev = ["pytest>=8.3,<10", "ruff>=0.12", "mypy>=1.15", "types-PyYAML>=6", "build>=1.2"]
@@ -38,7 +38,7 @@ eng = "eng.cli:app"
 where = ["src"]
 
 [tool.setuptools.package-data]
-eng = ["py.typed"]
+eng = ["py.typed", "resources/*/SKILL.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

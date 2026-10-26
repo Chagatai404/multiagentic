@@ -15,6 +15,40 @@ from eng.integrations.clients import (
 
 NOW = "2026-10-26T10:00:00+00:00"
 
+
+def test_cursor_normalizes_single_workspace_and_generation_identity(tmp_path: Path) -> None:
+    payload = {
+        "prompt": "Fix the parser with multiple agents",
+        "workspace_roots": [str(tmp_path)],
+        "conversation_id": "conversation",
+        "generation_id": "generation",
+        "hook_event_name": "beforeSubmitPrompt",
+    }
+    envelope = parse_hook_input(TriggerOrigin.CURSOR, json.dumps(payload), received_at=NOW)
+    assert envelope.cwd == str(tmp_path)
+    assert envelope.session_id == "conversation" and envelope.turn_id == "generation"
+    payload["workspace_roots"] = [str(tmp_path), str(tmp_path / "other")]
+    with pytest.raises(ValueError, match="exactly one"):
+        parse_hook_input(TriggerOrigin.CURSOR, json.dumps(payload), received_at=NOW)
+
+
+@pytest.mark.parametrize("origin", [TriggerOrigin.GEMINI, TriggerOrigin.CURSOR])
+def test_new_client_decision_blocks_only_a_started_task(
+    origin: TriggerOrigin, tmp_path: Path
+) -> None:
+    decision = TriggerDecision(action=TriggerAction.ROUTE, reason="keyword", task_id="task-1")
+    code, output = render_decision(origin, decision, project=tmp_path)
+    result = json.loads(output)
+    assert code == 0
+    if origin is TriggerOrigin.GEMINI:
+        assert result["decision"] == "deny" and "task-1" in result["reason"]
+    else:
+        assert result["continue"] is False and "task-1" in result["user_message"]
+    assert render_decision(
+        origin, decision.model_copy(update={"task_id": None}), project=tmp_path
+    ) == (0, "")
+
+
 CLAUDE_PAYLOAD = {
     "session_id": "sess-1",
     "transcript_path": "C:/Users/x/.claude/projects/p/sess-1.jsonl",

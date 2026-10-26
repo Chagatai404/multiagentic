@@ -12,6 +12,7 @@ import shlex
 import shutil
 import subprocess
 import tempfile
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -27,15 +28,55 @@ CODEX_NOTE = (
 )
 
 
-def _settings_path(origin: TriggerOrigin, project_root: Path) -> Path:
+class InstallScope(StrEnum):
+    USER = "user"
+    PROJECT = "project"
+
+
+def client_home(origin: TriggerOrigin) -> Path:
+    if origin is TriggerOrigin.GEMINI:
+        return Path.home() / ".gemini"
+    if origin is TriggerOrigin.CURSOR:
+        return Path.home() / ".cursor"
+    variable, directory = (
+        ("CLAUDE_CONFIG_DIR", ".claude")
+        if origin is TriggerOrigin.CLAUDE_CODE
+        else ("CODEX_HOME", ".codex")
+    )
+    override = os.environ.get(variable)
+    return Path(override).expanduser().resolve() if override else Path.home() / directory
+
+
+def _settings_path(origin: TriggerOrigin, project_root: Path | None, scope: InstallScope) -> Path:
+    if scope is InstallScope.USER:
+        filename = (
+            "settings.json"
+            if origin in {TriggerOrigin.CLAUDE_CODE, TriggerOrigin.GEMINI}
+            else "hooks.json"
+        )
+        return client_home(origin) / filename
+    if project_root is None:
+        raise ValueError("Project scope requires a project root")
     if origin is TriggerOrigin.CLAUDE_CODE:
         return project_root / ".claude" / "settings.local.json"
+    if origin is TriggerOrigin.GEMINI:
+        return project_root / ".gemini" / "settings.json"
+    if origin is TriggerOrigin.CURSOR:
+        return project_root / ".cursor" / "hooks.json"
     return project_root / ".codex" / "hooks.json"
 
 
 def _entry(origin: TriggerOrigin, argv: list[str]) -> dict[str, Any]:
     if origin is TriggerOrigin.CLAUDE_CODE:
         return {"type": "command", "command": argv[0], "args": argv[1:], "timeout": TIMEOUT_SECONDS}
+    if origin in {TriggerOrigin.GEMINI, TriggerOrigin.CURSOR}:
+        return {
+            "type": "command",
+            "command": subprocess.list2cmdline(argv) if os.name == "nt" else shlex.join(argv),
+            "timeout": TIMEOUT_SECONDS * 1000
+            if origin is TriggerOrigin.GEMINI
+            else TIMEOUT_SECONDS,
+        }
     return {
         "type": "command",
         "command": shlex.join(argv),
@@ -85,19 +126,31 @@ def _load(path: Path) -> tuple[dict[str, Any], bytes | None]:
     return data, raw
 
 
-def _groups(data: dict[str, Any]) -> tuple[dict[str, Any], list[Any]]:
+def _event(origin: TriggerOrigin) -> str:
+    if origin is TriggerOrigin.GEMINI:
+        return "BeforeAgent"
+    if origin is TriggerOrigin.CURSOR:
+        return "beforeSubmitPrompt"
+    return EVENT
+
+
+def _groups(data: dict[str, Any], event: str = EVENT) -> tuple[dict[str, Any], list[Any]]:
     hooks_map = data.get("hooks", {})
     if not isinstance(hooks_map, dict):
         raise ValueError("settings 'hooks' must be a JSON object")
-    groups = hooks_map.get(EVENT, [])
+    groups = hooks_map.get(event, [])
     if not isinstance(groups, list):
-        raise ValueError(f"settings 'hooks.{EVENT}' must be a JSON array")
+        raise ValueError(f"settings 'hooks.{event}' must be a JSON array")
+    if event == "beforeSubmitPrompt":
+        groups = [{"hooks": [hook]} for hook in groups]
     return hooks_map, groups
 
 
-def _with_entry(data: dict[str, Any], entry: dict[str, Any] | None) -> dict[str, Any]:
+def _with_entry(
+    data: dict[str, Any], entry: dict[str, Any] | None, event: str = EVENT
+) -> dict[str, Any]:
     """Return data with eng hooks replaced by entry (or removed when entry is None)."""
-    hooks_map, groups = _groups(data)
+    hooks_map, groups = _groups(data, event)
     if entry is None and not any(_has_eng(group) for group in groups):
         return data
 
@@ -121,9 +174,16 @@ def _with_entry(data: dict[str, Any], entry: dict[str, Any] | None) -> dict[str,
 
     result = dict(data)
     if updated:
-        result["hooks"] = {**hooks_map, EVENT: updated}
+        entries = (
+            [hook for group in updated for hook in group["hooks"]]
+            if event == "beforeSubmitPrompt"
+            else updated
+        )
+        result["hooks"] = {**hooks_map, event: entries}
+        if event == "beforeSubmitPrompt":
+            result.setdefault("version", 1)
     else:
-        rest = {key: value for key, value in hooks_map.items() if key != EVENT}
+        rest = {key: value for key, value in hooks_map.items() if key != event}
         if rest:
             result["hooks"] = rest
         else:
@@ -181,13 +241,23 @@ def _exclude_locally(project_root: Path, paths: list[Path]) -> list[str]:
     return added
 
 
-def install_hook(client: str, project_root: Path, *, mode: str, provider: str) -> dict[str, Any]:
+def install_hook(
+    client: str,
+    project_root: Path | None = None,
+    *,
+    mode: str,
+    provider: str | None,
+    scope: InstallScope = InstallScope.PROJECT,
+) -> dict[str, Any]:
     origin = client_origin(client)
-    entry = _entry(origin, hook_command(client, mode=mode, provider=provider, project=project_root))
-    path = _settings_path(origin, project_root)
-    _exclude_locally(project_root, [path, path.with_name(path.name + BACKUP_SUFFIX)])
+    scope = InstallScope(scope)
+    binding = project_root if scope is InstallScope.PROJECT else None
+    entry = _entry(origin, hook_command(client, mode=mode, provider=provider, project=binding))
+    path = _settings_path(origin, project_root, scope)
+    if scope is InstallScope.PROJECT and project_root is not None:
+        _exclude_locally(project_root, [path, path.with_name(path.name + BACKUP_SUFFIX)])
     data, raw = _load(path)
-    updated = _with_entry(data, entry)
+    updated = _with_entry(data, entry, _event(origin))
     result: dict[str, Any] = {
         "client": origin.value,
         "path": str(path),
@@ -204,11 +274,13 @@ def install_hook(client: str, project_root: Path, *, mode: str, provider: str) -
     return result
 
 
-def uninstall_hook(client: str, project_root: Path) -> dict[str, Any]:
+def uninstall_hook(
+    client: str, project_root: Path | None = None, *, scope: InstallScope = InstallScope.PROJECT
+) -> dict[str, Any]:
     origin = client_origin(client)
-    path = _settings_path(origin, project_root)
+    path = _settings_path(origin, project_root, InstallScope(scope))
     data, raw = _load(path)
-    updated = _with_entry(data, None)
+    updated = _with_entry(data, None, _event(origin))
     result: dict[str, Any] = {
         "client": origin.value,
         "path": str(path),
@@ -222,11 +294,13 @@ def uninstall_hook(client: str, project_root: Path) -> dict[str, Any]:
     return result
 
 
-def hook_status(client: str, project_root: Path) -> dict[str, Any]:
+def hook_status(
+    client: str, project_root: Path | None = None, *, scope: InstallScope = InstallScope.PROJECT
+) -> dict[str, Any]:
     origin = client_origin(client)
-    path = _settings_path(origin, project_root)
+    path = _settings_path(origin, project_root, InstallScope(scope))
     data, _ = _load(path)
-    _, groups = _groups(data)
+    _, groups = _groups(data, _event(origin))
     eng_hooks = [
         hook for group in groups if _has_eng(group) for hook in group["hooks"] if _is_eng(hook)
     ]

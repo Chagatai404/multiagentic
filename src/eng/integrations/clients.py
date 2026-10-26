@@ -17,7 +17,12 @@ from eng.core.triggers import (
 
 HOOK_MODULE = "eng.integrations.hook"
 REASON_LIMIT = 1000
-HOOK_CLIENTS = (TriggerOrigin.CLAUDE_CODE, TriggerOrigin.CODEX)
+HOOK_CLIENTS = (
+    TriggerOrigin.CLAUDE_CODE,
+    TriggerOrigin.CODEX,
+    TriggerOrigin.GEMINI,
+    TriggerOrigin.CURSOR,
+)
 _PROVIDER = re.compile(r"[a-z][a-z0-9-]{0,39}")
 
 
@@ -45,14 +50,23 @@ def parse_hook_input(origin: TriggerOrigin, raw: str, *, received_at: str) -> Tr
     if not isinstance(prompt, str):
         raise ValueError("hook input prompt must be a string")
     cwd = _optional_str(data, "cwd")
+    if origin is TriggerOrigin.CURSOR:
+        roots = data.get("workspace_roots")
+        if not isinstance(roots, list) or len(roots) != 1 or not isinstance(roots[0], str):
+            raise ValueError("Cursor routing requires exactly one workspace root")
+        cwd = roots[0]
     if cwd is None:
         raise ValueError("hook input cwd must be a non-empty string")
     return TriggerEnvelope(
         origin=origin,
         event=_optional_str(data, "hook_event_name") or "UserPromptSubmit",
-        session_id=_optional_str(data, "session_id"),
+        session_id=_optional_str(data, "session_id") or _optional_str(data, "conversation_id"),
         # Claude Code sends prompt_id, Codex sends turn_id; both are the idempotency identity.
-        turn_id=_optional_str(data, "prompt_id") or _optional_str(data, "turn_id"),
+        turn_id=(
+            _optional_str(data, "prompt_id")
+            or _optional_str(data, "turn_id")
+            or _optional_str(data, "generation_id")
+        ),
         cwd=cwd,
         prompt=prompt,
         received_at=received_at,
@@ -74,6 +88,10 @@ def render_decision(
     reason = f"{lead} The prompt was not sent to the assistant. Check progress with: {status}"
     if len(reason) > REASON_LIMIT:
         reason = reason[: REASON_LIMIT - 3] + "..."
+    if origin is TriggerOrigin.CURSOR:
+        return 0, json.dumps({"continue": False, "user_message": reason}, ensure_ascii=False)
+    if origin is TriggerOrigin.GEMINI:
+        return 0, json.dumps({"decision": "deny", "reason": reason}, ensure_ascii=False)
     return 0, json.dumps({"decision": "block", "reason": reason}, ensure_ascii=False)
 
 
@@ -83,10 +101,10 @@ def render_error(origin: TriggerOrigin, message: str) -> tuple[int, str]:
 
 
 def hook_command(
-    client: str, *, mode: str, provider: str, project: Path | None = None
+    client: str, *, mode: str, provider: str | None, project: Path | None = None
 ) -> list[str]:
     origin = client_origin(client)
-    if not _PROVIDER.fullmatch(provider):
+    if provider is not None and not _PROVIDER.fullmatch(provider):
         raise ValueError(f"invalid provider name: {provider!r}")
     argv = [
         sys.executable,
@@ -95,9 +113,9 @@ def hook_command(
         origin.value,
         "--mode",
         TriggerMode(mode).value,
-        "--provider",
-        provider,
     ]
+    if provider is not None:
+        argv += ["--provider", provider]
     if project is not None:
         # Binds the hook to the project it was installed in; other repositories bypass.
         argv += ["--project", str(project.resolve())]

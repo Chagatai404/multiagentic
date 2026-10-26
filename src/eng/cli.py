@@ -31,9 +31,11 @@ from eng.core.triggers import TriggerEnvelope, TriggerMode, TriggerOrigin
 from eng.execution.process import redact, redact_data
 from eng.execution.workspace import repository_root, task_lock
 from eng.integrations import gitinstall
+from eng.integrations.clients import HOOK_CLIENTS
 from eng.integrations.gitref import verify_ref
 from eng.integrations.hook import DEFAULT_PROVIDERS, submit
-from eng.integrations.install import hook_status, install_hook, uninstall_hook
+from eng.integrations.install import InstallScope, hook_status, install_hook, uninstall_hook
+from eng.integrations.skills import update_skills
 from eng.projects.config import initialize, load_config
 from eng.providers.base import Provider
 from eng.providers.registry import build_registry
@@ -44,7 +46,7 @@ from eng.storage.store import Store
 app = typer.Typer(no_args_is_help=True, help="Execute engineering tasks in isolated Git worktrees.")
 hooks_app = typer.Typer(
     no_args_is_help=True,
-    help="Install opt-in prompt hooks for Claude Code or Codex in this project only.",
+    help="Install, inspect or remove user-wide or project prompt hooks.",
 )
 app.add_typer(hooks_app, name="hooks")
 git_hooks_app = typer.Typer(
@@ -501,13 +503,72 @@ def triggers(project: Project = Path("."), limit: int = 50) -> None:
             store.close()
 
 
-Client = Annotated[TriggerOrigin, typer.Argument(help="claude-code or codex")]
+Client = Annotated[TriggerOrigin, typer.Argument(help="claude-code, codex, gemini or cursor")]
+Scope = Annotated[InstallScope, typer.Option(help="user-wide or project-local installation")]
 
 
 def hook_client(client: TriggerOrigin) -> str:
     if client in {TriggerOrigin.CLI, TriggerOrigin.CI}:
-        raise ValueError("Hooks are installed for claude-code or codex")
+        raise ValueError("Hooks are installed for claude-code, codex, gemini or cursor")
     return client.value
+
+
+@app.command("install")
+def install(
+    scope: Scope = InstallScope.USER,
+    project: Project = Path("."),
+    client: Annotated[str, typer.Option(help="all, claude-code, codex, gemini or cursor")] = "all",
+    mode: Annotated[TriggerMode, typer.Option(help="Routing mode")] = TriggerMode.KEYWORDS,
+    skill_dir: Annotated[
+        list[Path] | None, typer.Option(help="Additional client skills directory; repeatable")
+    ] = None,
+) -> None:
+    """Install workflow hooks and skills for current and future supported client sessions."""
+    try:
+        clients = (
+            [origin.value for origin in HOOK_CLIENTS]
+            if client == "all"
+            else [hook_client(TriggerOrigin(client))]
+        )
+        root = repository_root(project) if scope is InstallScope.PROJECT else None
+        for name in clients:
+            hook_status(
+                name, root, scope=scope
+            )  # validate all settings before writing skills/hooks
+        skills = update_skills(scope, root, extra_dirs=skill_dir or [])
+        hooks = [
+            install_hook(
+                name,
+                root,
+                mode=mode.value,
+                provider=DEFAULT_PROVIDERS[name],
+                scope=scope,
+            )
+            for name in clients
+        ]
+        emit({"scope": scope.value, "hooks": hooks, "skills": skills})
+    except (ValueError, OSError) as error:
+        fail(error)
+
+
+@app.command("uninstall")
+def uninstall(
+    scope: Scope = InstallScope.USER,
+    project: Project = Path("."),
+    skill_dir: Annotated[
+        list[Path] | None, typer.Option(help="Additional client skills directory")
+    ] = None,
+) -> None:
+    """Remove eng's hooks and managed skill files in the selected scope."""
+    try:
+        root = repository_root(project) if scope is InstallScope.PROJECT else None
+        for origin in HOOK_CLIENTS:
+            hook_status(origin.value, root, scope=scope)
+        skills = update_skills(scope, root, extra_dirs=skill_dir or [], remove=True)
+        hooks = [uninstall_hook(origin.value, root, scope=scope) for origin in HOOK_CLIENTS]
+        emit({"scope": scope.value, "hooks": hooks, "skills": skills})
+    except (ValueError, OSError) as error:
+        fail(error)
 
 
 @hooks_app.command("install")
@@ -518,31 +579,40 @@ def hooks_install(
     provider: Annotated[
         str | None, typer.Option(help="Provider for routed work; defaults to the client's")
     ] = None,
+    scope: Scope = InstallScope.PROJECT,
 ) -> None:
-    """Add or update this project's local eng prompt hook; other hooks are preserved."""
+    """Add or update an eng prompt hook; other hooks are preserved."""
     try:
         name = hook_client(client)
-        selected = provider or DEFAULT_PROVIDERS[client] or "codex"
-        build_registry().create(selected)
-        emit(install_hook(name, repository_root(project), mode=mode.value, provider=selected))
+        selected = provider or DEFAULT_PROVIDERS[client]
+        root = repository_root(project) if scope is InstallScope.PROJECT else None
+        if selected is not None and root is not None:
+            build_registry(command_providers=load_config(root).command_providers).create(selected)
+        emit(install_hook(name, root, mode=mode.value, provider=selected, scope=scope))
     except (ValueError, OSError) as error:
         fail(error)
 
 
 @hooks_app.command("uninstall")
-def hooks_uninstall(client: Client, project: Project = Path(".")) -> None:
-    """Remove only eng's prompt hook entries from this project's client settings."""
+def hooks_uninstall(
+    client: Client, project: Project = Path("."), scope: Scope = InstallScope.PROJECT
+) -> None:
+    """Remove only eng's prompt hook entries from the selected client settings."""
     try:
-        emit(uninstall_hook(hook_client(client), repository_root(project)))
+        root = repository_root(project) if scope is InstallScope.PROJECT else None
+        emit(uninstall_hook(hook_client(client), root, scope=scope))
     except (ValueError, OSError) as error:
         fail(error)
 
 
 @hooks_app.command("status")
-def hooks_status(client: Client, project: Project = Path(".")) -> None:
-    """Show whether this project's client settings contain the eng prompt hook."""
+def hooks_status(
+    client: Client, project: Project = Path("."), scope: Scope = InstallScope.PROJECT
+) -> None:
+    """Show whether the selected client settings contain the eng prompt hook."""
     try:
-        emit(hook_status(hook_client(client), repository_root(project)))
+        root = repository_root(project) if scope is InstallScope.PROJECT else None
+        emit(hook_status(hook_client(client), root, scope=scope))
     except (ValueError, OSError) as error:
         fail(error)
 

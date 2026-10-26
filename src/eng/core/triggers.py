@@ -2,8 +2,9 @@
 
 Client hooks (Claude Code, Codex) and the generic ``eng trigger`` command convert their
 input into a TriggerEnvelope. Routing is deliberately high precision: a prompt that is not
-an explicit ``eng:`` request (or, in adaptive/full mode, a clearly imperative change
-request) passes through to the interactive client unchanged.
+an explicit ``eng:`` request, a multi-agent keyword request in keywords/adaptive/full
+mode, or a clearly imperative change request in adaptive/full mode passes through to
+the interactive client unchanged.
 """
 
 import hashlib
@@ -25,12 +26,15 @@ CONTENT_DEDUP_SECONDS = 120.0
 class TriggerOrigin(StrEnum):
     CLAUDE_CODE = "claude-code"
     CODEX = "codex"
+    GEMINI = "gemini"
+    CURSOR = "cursor"
     CLI = "cli"
     CI = "ci"
 
 
 class TriggerMode(StrEnum):
     MANUAL = "manual"  # only explicit eng: requests route
+    KEYWORDS = "keywords"  # eng: and multi-agent requests, without general heuristics
     ADAPTIVE = "adaptive"  # adds high-confidence imperative change requests
     FULL = "full"  # adaptive routing plus stronger verification of routed work
 
@@ -59,6 +63,7 @@ class TriggerDecision(Contract):
     # Routed task description: the prompt with any eng: marker removed.
     description: str | None = None
     full_verification: bool = False
+    multi_agent: bool = False
     task_id: str | None = None
 
 
@@ -76,6 +81,7 @@ class TriggerRecord(Contract):
 
 
 _ENG_PREFIX = re.compile(r"^\s*eng:(.*)$", re.IGNORECASE | re.DOTALL)
+_MULTI_AGENT = re.compile(r"\b(?:multi[\s-]*agents?|multiple[\s-]+agents?)\b", re.IGNORECASE)
 _IMPERATIVE = re.compile(
     r"^\s*(?:please\s+)?(?:fix|implement|add|create|refactor|update|rename|remove"
     r"|write\s+(?:(?:the|new|more|unit|missing)\s+)*tests?)\b",
@@ -125,6 +131,7 @@ def route_trigger(
             reason="Explicit eng: request",
             description=description,
             full_verification=mode == TriggerMode.FULL,
+            multi_agent=bool(_MULTI_AGENT.search(description)),
         )
     prompt = envelope.prompt.strip()
     if not prompt:
@@ -137,6 +144,16 @@ def route_trigger(
         TaskType.QUESTION
     ):
         return _bypass("Question or explanation request")
+    if _MULTI_AGENT.search(prompt):
+        return TriggerDecision(
+            action=TriggerAction.ROUTE,
+            reason="Multi-agent keyword request",
+            description=prompt,
+            multi_agent=True,
+            full_verification=mode == TriggerMode.FULL,
+        )
+    if mode == TriggerMode.KEYWORDS:
+        return _bypass("No eng: prefix or multi-agent keyword")
     if _IMPERATIVE.match(prompt) and not prompt.endswith("?") and len(prompt.split()) >= 3:
         return TriggerDecision(
             action=TriggerAction.ROUTE,

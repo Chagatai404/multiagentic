@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased - user-wide installation and keyword triggers
+
+- Add `eng install` / `eng uninstall`, defaulting to user scope; preserve project scope
+  with `--scope project` and existing per-client hook commands.
+- Add keyword routing for multi agent, multi-agent, multiagent and multiple agents,
+  selecting planner, engineer, required checks and reviewer with at least three calls.
+- Add native Gemini CLI and Cursor hooks alongside Claude Code and Codex, plus a
+  portable skill for Copilot and future clients using shared or custom skill roots.
+- Preserve unrelated settings, backups, client trust, project checks and human approvals.
+- Document persistent tool installation, client coverage and both installation scopes.
+
 ## 1.0.0 - M5 close-out and M6
 
 M5 close-out
