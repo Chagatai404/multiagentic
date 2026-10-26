@@ -74,7 +74,7 @@ PLAN_CHECK = """\
 from pathlib import Path
 
 for path in sorted(Path('files').glob('*.txt')):
-    assert path.read_text() == path.stem.upper(), path.name
+    assert path.read_text(encoding='utf-8') == path.stem.upper(), path.name
 assert not (Path('files/xa.txt').exists() and Path('files/xb.txt').exists()), 'xa+xb'
 """
 
