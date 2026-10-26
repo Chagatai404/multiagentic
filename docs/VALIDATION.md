@@ -251,3 +251,101 @@ on this fixture and remains constructor opt-in, off by default. No CLI cache fla
 or performance improvement is claimed. Runtime scheduling and Git/CI integration
 remain M6; tool/turn telemetry remains unsupported. Historical live-editing, live
 client-hook and POSIX runtime limitations above still apply.
+
+## M5 close-out and M6 - verified offline on Linux (2026-10-26)
+
+Host: Linux 6.18 (x86-64), Git 2.43.0, Node 22, Claude Code 2.1.310 (not authenticated;
+no live call made), no Codex CLI installed. Python 3.12.3, 3.13.17 and 3.14.6.
+
+**First POSIX run of the M5 suite.** The M5 tip (`325d9aa`) had only run on Windows
+locally; its GitHub Actions run was green on ubuntu/windows x Python 3.12/3.14. Running it
+on Linux produced **430 passed, 1 failed**: `test_debugger_repairs_and_keeps_all_check_logs`
+indexed `rglob` results, which are in directory order (ext4 hash order here, NTFS name
+order on Windows). The test now keys the two check rounds by parent directory name; no
+product code was involved. M5 build, Ruff, strict mypy and the wheel smoke below pass.
+
+**M6 offline evidence.** Final full run, after the last code change:
+
+| Interpreter | Result |
+|---|---|
+| 3.12.3 | 554 passed, 3 skipped (82.77 s) |
+| 3.13.17 | 554 passed, 3 skipped (81.24 s) |
+| 3.14.6 | 554 passed, 3 skipped (83.84 s) |
+
+Skips: the paid opt-in Codex live test, the Windows-only job-breakaway test, and the
+official-MCP-SDK test, which needs the `mcp` package (not a dependency). That SDK test
+passes (1 passed) in a scratch environment with `mcp` 2.3.0; CI runs it in its own job.
+Ruff passes; strict mypy passes for `--platform linux` and `--platform win32` (51 source
+files); `uv lock --check` passes (28 packages). Source and wheel build; all 52 package
+files are byte-identical to `src/`, `py.typed` and `LICENSE` are in the wheel, and the sdist
+carries README, LICENSE and the M6 docs. A fresh Python 3.13 environment containing only the
+installed wheel ran, with no model call: `eng --version`, `eng providers` outside a
+repository, `eng plan validate|create|run|promote|promote --approve` on a three-node plan
+through a configured command provider (READY, three integration commits, checkout clean
+and fast-forwarded), `eng mcp serve` initialize, `eng hooks git install|status` and
+`eng verify-ref HEAD` (PASS).
+
+What the 123 new tests (122 always run, plus the SDK interoperability test) exercise (all on disposable repositories, no model calls):
+
+- Pure plan logic: pattern normalization, 13 overlap cases (symmetric), ownership
+  matching, cycle/duplicate/unknown/self dependency rejection, concurrency bounds,
+  readiness, skipping and plan-status derivation.
+- Concurrency: a four-node plan observed overlapping (peak 2-3, never above three); a
+  13-node plan that saturates at exactly three and produces one integration commit per
+  node; two coordinators sharing one project-wide cap; `concurrency: 1` serializes;
+  slot locks cap at three. The plan test file passed five consecutive runs unchanged.
+- Safety: ownership violation FAILS the node and SKIPS dependents with nothing integrated;
+  both sides of a rename are visible; an integrated tree that fails verification is rolled
+  back and the node BLOCKED (each node passes alone, only the combination fails); a merge
+  conflict BLOCKS without moving the head; a coordinator crash, an unrecorded integration
+  commit and a tampered plan branch are reconciled or refused; promotion refuses a dirty
+  checkout, a diverged branch, a detached HEAD and a moved plan branch, never runs without
+  `--approve`, never twice, and no remote is ever configured.
+- Approvals/budgets: a high-risk node pauses until `plan approve` or run-level approval;
+  plan-wide limits with unknown coverage stop launches until `--clear-limits`; `create`
+  refuses projects with no confirmed required check, an unknown provider, or a dirty
+  checkout, leaving no branch or worktree behind.
+- Triggers: PASS/FAIL/INCOMPLETE semantics; real `git commit` runs the installed hook and a
+  detached verification records a result without delaying the commit; a blocking
+  `pre-push` blocks a failing push and allows a passing one, and fails open when checks
+  are unconfirmed; foreign hooks are never overwritten or removed; the hook is inert under
+  `ENG_ACTIVE` and fails open outside a repository; CI success/cancel bypass, failure routes
+  one deduplicated task per run attempt, the summary is redacted and quoted as untrusted.
+- Providers/MCP: command provider stdin/exit/timeout/cancel/model-flag/environment
+  scrubbing and credential redaction; MCP initialize/version negotiation, batches,
+  notifications, parse/invalid-request errors, argument validation, redaction, the absence
+  of any approval-class tool, idempotent `eng_submit`, and a real stdio subprocess.
+
+**Bug found by load testing and fixed (coordinator starvation).** A full run on two
+interpreters under a concurrent workload had one intermittent failure that the quiet runs
+did not. Reproduced by running the plan tests beside six CPU-bound processes (4 cores):
+about one run in four failed `test_two_plans_share_the_project_wide_slot_cap`, with a plan
+left `CREATED`. Cause: a coordinator that could not take a project slot (another plan held
+all three) and had nothing of its own running treated "nothing launched" as "nothing left to
+do" and exited with ready work. Fix: a starved coordinator now waits and retries, emitting
+`waiting_for_slot` once, until it can launch or is cancelled. A deterministic regression test
+holds all three slots, shows the coordinator stays alive, releases them, and expects READY;
+with the fix disabled the test fails, with it enabled it passes. Afterwards six consecutive
+loaded runs of 63 trigger/plan/MCP/provider tests passed. Lesson recorded: a clean run on a
+quiet machine does not prove a concurrency feature; always stress it.
+
+**Bug found by the e2e tests and fixed.** Git exports `GIT_DIR`/`GIT_INDEX_FILE` to hooks;
+the detached verifier inherited them and `git worktree add` failed ("Not a directory"),
+recorded as INCOMPLETE. The hook entry point now scrubs repository-local `GIT_*` variables.
+**Hardening found in review.** `changed_paths` used rename detection, which would hide the
+deleted side of a rename from protected-path/ownership checks; it now uses `--no-renames`.
+Plan limits had no explicit override; `--clear-limits` was added.
+
+**Adapter drift check.** Every flag `ClaudeProvider` passes (`--safe-mode --restricted
+--print --output-format --no-session-persistence --permission-mode --permission-prompts
+--strict-mcp-config --mcp-config --setting-sources --tools --disable-slash-commands
+--no-chrome --model`) is present in `claude --help` of 2.1.310 (baseline 2.1.301). Codex
+could not be re-checked (not installed here); its baseline remains 0.149.0.
+
+**Not established.** Successful live model editing with Codex or Claude (no authenticated
+provider was available or used); firing inside live Claude Code/Codex hooks; real CI-service
+delivery (`ci-trigger` is driven with emulated events and GitHub-style variables); any real
+third-party command provider; Windows runtime behaviour of the M6 code (threads, slot
+locks, hook scripts through Git for Windows `sh`), which only the CI matrix exercises; load
+beyond three concurrent nodes by design; and scheduling performance (no benchmark of M6
+was made, so no speed or cost claim is made).

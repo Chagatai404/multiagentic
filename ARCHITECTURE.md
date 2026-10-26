@@ -1,7 +1,8 @@
-# Architecture (M0 through M5)
+# Architecture (M0 through M6)
 
 Dependency direction: CLI → engine shell → subsystem contracts and adapters. The
-functional core is `core/models.py`, `core/policy.py`, `core/accounting.py` and `core/workflow.py`: Pydantic
+functional core is `core/models.py`, `core/policy.py`, `core/accounting.py`, `core/workflow.py`,
+`core/plan.py` and `core/refs.py`: Pydantic
 contracts, legal transitions, and evidence-based completion. `core/engine.py` is
 explicitly the imperative orchestration shell; it injects a Provider and Store.
 Models/policy import no provider, subprocess, filesystem execution, or storage code.
@@ -15,6 +16,8 @@ Models/policy import no provider, subprocess, filesystem execution, or storage c
 | Project/context | `projects/`, `context/` | YAML snapshot, tracked selective context, character budget |
 | Execution/verification | `execution/`, `verification/` | Worktrees, process lifecycle, real check evidence |
 | Persistence/telemetry | `storage/` | SQLite transactions, migrations, events, artifact references |
+| Plans | `core/plan.py`, `scheduling/`, `execution/integrate.py` | Pure DAG/ownership policy; coordinator, slot locks, serialized integration, promotion |
+| Git/CI/MCP | `integrations/git*.py`, `integrations/mcp.py`, `core/refs.py` | Commit verification, Git hooks, CI failure routing, read-only MCP |
 
 ## Contracts and invariants
 
@@ -199,3 +202,69 @@ than uncached construction. Context and role elapsed events measure orchestratio
 not an inferred startup/inference split. `eng.benchmark` runs independent scripted
 A/B/C fixture workflows and reports raw observations with unknown token/cost fields;
 it cannot establish live-model cost or quality improvements.
+
+## M6 plans, integration, triggers, providers and MCP
+
+**Plans** (`core/plan.py`, pure). A `PlanSpec` is a DAG of nodes with required ownership
+patterns and `concurrency` 1-3. Validation rejects unknown/duplicate/cyclic dependencies
+and any pair of nodes not ordered by a dependency whose ownership cannot be proven
+disjoint (a segment-wise DP over `**`/wildcard patterns that errs toward "overlap").
+Scheduling functions (`ready_nodes`, `skipped_nodes`, `derive_plan_status`) are pure:
+a node is ready only when every dependency is INTEGRATED; no new node starts after a
+node fails, pauses or blocks unless `keep_going`.
+
+**Ownership** is a task-level invariant, not a plan feature: `TaskSpec.owned_paths` makes
+the engine fail a task, before verification, if `changed_paths` (renames split, so both
+sides count) leaves ownership. Empty ownership keeps the M0-M5 behaviour.
+`TaskSpec.base_commit` starts the worktree from a given commit.
+
+**Coordinator** (`scheduling/runner.py`). One coordinator per plan holds an OS lock
+(`plan-ID`). Each launched node is a normal task executed by the unchanged engine in a
+worker thread that owns its `Store` connection and event loop. Concurrency is capped per
+plan and, via three `slot-N.lock` files, per project across processes and plans (plan
+nodes and `verify-ref` share them; ad-hoc `eng run` and hook-started tasks are
+user-initiated and not counted). Only the coordinator thread writes the plan record and
+the integration branch. Crash recovery: nodes left RUNNING are resumed through the
+engine's existing checkpoint rules, COMPLETED-but-unintegrated nodes are integrated, and
+`reconcile` resets the eng-owned integration worktree to the last recorded verified head.
+Plan-wide reported-usage limits reuse `budget_stop_reason` across all node invocations.
+
+**Integration** (`execution/integrate.py`, `scheduling/integration.py`). A completed
+node's worktree is captured as a commit object through a temporary index (the worktree is
+never modified), its paths are re-checked against ownership and protected patterns,
+and `git merge-tree --write-tree --merge-base` computes the merge without touching any
+worktree. The merged commit becomes the integration branch head, the project's required
+checks run on that tree, and failure restores the previous head (`reset --hard` and
+`clean` apply only to the eng-owned plan worktree). Integration is serialized and is a
+second completion gate on top of each task's own gate. **Promotion** is separate and
+approval-gated: all nodes INTEGRATED, last verification PASS, branch tip equals the
+recorded head, clean checkout on a named branch that is an ancestor of the plan head, then
+`git merge --ff-only`. No code path pushes, creates a remote or removes a worktree.
+SQLite migration 5 adds `plans`, `plan_events` and `ref_checks`.
+
+**Triggers.** `integrations/gitref.py` verifies a commit in a throwaway worktree using
+the user's configuration (a commit cannot weaken its checks); `ref_outcome` yields PASS
+only through `completion_gate`, FAIL only on a definitive required-check failure and
+INCOMPLETE otherwise. `integrations/githook.py` is the fail-open hook entry point: it is
+inert under `ENG_ACTIVE`, scrubs repository-local `GIT_*` variables Git exports to hooks
+(they would otherwise redirect worktree operations in the detached verifier), and only an
+explicit `--block` pre-push with a definitive FAIL exits non-zero. `gitinstall.py` writes
+marker-tagged hooks and never overwrites or removes a hook it did not write.
+`eng ci-trigger` builds a `CIEvent`; only failure/timeout routes, via the M4 claim/
+dedup/detached-runner path keyed by CI system, workflow, run id and attempt, with the CI
+output redacted and quoted as untrusted data.
+
+**Providers.** `command_providers` in `project.yaml` register a `CommandProvider`: fixed
+argv resolved by `resolve_command`, prompt on stdin, scrubbed environment plus only
+declared credential-named variables, standard capture/redaction, exit/timeout/cancel
+mapping, usage unknown. Doctor locates but never executes it.
+
+**MCP.** `integrations/mcp.py` is a dependency-free stdio JSON-RPC server bound to one
+project. Tools take ids only, output is redacted and bounded, and only the opt-in
+`eng_submit` mutates (through `submit`). It exposes no approve/resume/cancel/integrate/
+promote tool, so approval cannot be self-granted through it.
+
+Limits: Windows and POSIX runtime parity is exercised by CI, not by the validation host
+(Linux here); real CI-service delivery, live provider editing, live client hooks and
+real third-party command providers are not validated; runtime parallelism shares one
+SQLite database (WAL, 10-second busy timeout) and one Git object store.

@@ -1,5 +1,37 @@
 # Changelog
 
+## 1.0.0 - M5 close-out and M6
+
+M5 close-out
+- Run the offline suite on Linux/POSIX for the first time; fix one platform-dependent
+  test (directory-enumeration order). Claude adapter flags re-checked against installed
+  Claude Code 2.1.310.
+
+M6 - verified offline
+- Add dependency-scheduled plans (`eng plan validate|create|run|resume|status|usage|
+  approve|cancel|promote`): DAG validation, conservative ownership-overlap rejection,
+  at most three concurrent nodes per plan and per project, independent worktrees that
+  start from the integrated head, enforced task ownership (`TaskSpec.owned_paths`).
+- Add verified integration: nodes merge serially into `eng/plan/ID` via
+  `git merge-tree --write-tree`; required checks run on the integrated tree and any
+  failure rolls back. Promotion into the user's branch is explicit, approval-gated,
+  fast-forward-only and never pushes. Plan-wide reported-usage limits and explicit
+  `--clear-limits`.
+- Add Git/CI triggers: `eng verify-ref`/`eng refs`, `eng hooks git install|uninstall|
+  status` (post-commit, optional blocking pre-push; never overwrites foreign hooks;
+  scrubs Git's hook environment), and `eng ci-trigger` (failure -> one deduplicated
+  repair task, CI output quoted as untrusted).
+- Add configured command providers (`command_providers` in project.yaml), `eng providers
+  -p`/`eng doctor -p`, and an optional dependency-free MCP server (`eng mcp serve`) with
+  read-only tools, opt-in `eng_submit`, and no approval tools.
+- `changed_paths` no longer detects renames, so both sides of a rename are visible to
+  protected-path and ownership checks (a hardening of M1-M5 behaviour).
+- SQLite migration 5 (`plans`, `plan_events`, `ref_checks`); `eng --version`; `py.typed`;
+  CI jobs for MCP SDK compatibility and an installed-wheel smoke test.
+- Not validated: live provider editing, live client hooks, real CI-service delivery,
+  third-party command providers, Windows runtime for M6 (CI covers it). See
+  docs/RELEASE.md.
+
 ## M5 - verified offline
 
 - Stream redacted provider/check artifacts with bounded excerpts, explicit capture

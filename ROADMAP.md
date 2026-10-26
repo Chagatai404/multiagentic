@@ -22,11 +22,19 @@
   pricing estimates, role models and reported-usage stops before new calls. Opt-in
   content-hash caching defaults off (slower on the measured Windows fixture).
   Repeated scripted A/B/C results are preserved; no live-model cost/quality claim.
-- **M6:** dependency scheduling, ownership, max-three concurrency, independent worktrees,
-  safe integration and approvals, Git/CI triggers, more providers and optional MCP.
+- **M6 - verified offline:** dependency-scheduled plans with enforced ownership,
+  max-three concurrency (per plan and per project), independent worktrees based on the
+  integrated head, serialized merge-tree integration with post-merge verification and
+  rollback, approval-gated fast-forward promotion, Git hook / `verify-ref` / CI-failure
+  triggers, configured command providers and an optional read-only MCP server.
+  Tested on disposable repositories, emulated CI events, real Git hooks and the official
+  MCP client SDK. No live provider, CI-service or client-hook validation is claimed.
+- **1.0.0 release:** M0-M6 complete; see [release notes](docs/RELEASE.md) for the
+  evidence and the list of what is deliberately not claimed.
 
 Later milestones must not weaken completion or recovery guarantees to improve speed.
 
 Provider tool/turn usage and hard in-flight spend caps remain unsupported. Successful
-live model editing, live-client hook firing and POSIX runtime behavior are not
-established by Windows offline verification.
+live model editing, live-client hook firing and real CI-service delivery are not
+established. POSIX runtime behavior was verified on Linux for M5/M6; Windows runtime
+behavior for M6 is exercised by CI only.

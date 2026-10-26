@@ -1,0 +1,26 @@
+# eng plan create docs/plan.example.yaml -p /path/to/repository
+# Nodes are tasks. A node starts only after its dependencies are integrated and verified,
+# in its own Git worktree based on the integrated result. Unordered nodes must own
+# provably disjoint paths; at most three run at once.
+name: add-greeting-feature
+concurrency: 3
+provider: codex            # default; a node may set its own `provider` / `model`
+node_budgets:              # per-node task budgets (default: the project's budgets)
+  model_calls: 3
+  wall_seconds: 900
+limits:                    # optional plan-wide reported-usage stop thresholds
+  reported_input_tokens: 500000
+nodes:
+  - id: core
+    description: Add a greet(name) function to src/greeting.py
+    acceptance: [greet('Ada') returns 'Hello, Ada!']
+    owns: [src/greeting.py]
+  - id: docs
+    description: Document the greeting module in docs/greeting.md
+    acceptance: [The document shows a greet() example]
+    owns: [docs/greeting.md]
+  - id: tests
+    description: Add unit tests for greet() in tests/test_greeting.py
+    acceptance: [Tests cover a normal and an empty name]
+    owns: [tests/test_greeting.py]
+    depends_on: [core]

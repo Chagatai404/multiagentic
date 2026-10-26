@@ -16,7 +16,12 @@ permission bypass. Worktrees are not security sandboxes. Do not log credentials.
 Run focused pytest coverage, ruff and mypy for affected changes; inspect actual diffs.
 Run full tests and a package build before a milestone handoff. Live model tests are
 opt-in, time/call bounded and potentially billable. Report skipped/unavailable checks.
-Do not claim deferred multi-agent roles, hooks or adapters are operational.
+Plans (`eng plan`), Git/CI triggers, command providers and the MCP server are operational
+as of M6, verified offline only; do not claim live provider editing, live client hooks,
+real CI delivery or Windows M6 runtime behaviour are validated unless you have run them.
+Plan approvals and promotion are human CLI actions: never add a model-callable way to
+grant them (the MCP server deliberately has none) and never make eng push or delete
+workspaces. Concurrency is capped at three (`core/plan.MAX_CONCURRENCY`).
 
 Permanent Obsidian vault: C:/Users/ASUS/Obsidian/Knowledge. Use the Obsidian skill
 for relevant durable knowledge; consult only the corresponding project note when
