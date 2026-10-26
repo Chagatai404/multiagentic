@@ -15,6 +15,7 @@ from typing import Any
 from eng.core.models import State, Task
 from eng.core.plan import NodeStatus, PlanNode, PlanRecord, PlanStatus, outside_ownership
 from eng.core.policy import completion_gate
+from eng.core.reuse import build_dependency_handoff
 from eng.execution.integrate import (
     changed_between,
     commit_tree,
@@ -139,6 +140,15 @@ def integrate_node(
         return _block(store, plan, node, f"Integration failed: {error}", "integration_error")
     plan.head_commit = candidate
     node.integrated_commit = candidate
+    assert node.node_commit is not None
+    node.handoff = build_dependency_handoff(
+        node_id=node.spec.id,
+        task=task,
+        node_commit=node.node_commit,
+        integrated_commit=candidate,
+        changed_files=paths,
+        interfaces=node.spec.interfaces,
+    )
     node.status = NodeStatus.INTEGRATED
     node.message = "Integrated and verified"
     plan.final_verified = True

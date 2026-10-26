@@ -71,14 +71,16 @@ def test_tools_are_read_only_and_expose_no_approval_surface(repo: Path) -> None:
     }
     assert all(tool["annotations"]["readOnlyHint"] for tool in tools)
     assert all(tool["inputSchema"]["additionalProperties"] is False for tool in tools)
-    for forbidden in ("approve", "promote", "resume", "cancel", "integrate", "merge"):
+    for forbidden in ("approve", "attest", "promote", "resume", "cancel", "integrate", "merge"):
         assert not any(forbidden in name for name in names)
     with_submit = rpc(McpServer(repo, allow_submit=True), "tools/list")["result"]["tools"]
     extra = [t for t in with_submit if t["name"] not in names]
     assert [t["name"] for t in extra] == ["eng_submit"]
     assert extra[0]["annotations"]["readOnlyHint"] is False
     assert not any(
-        word in t["name"] for t in with_submit for word in ("approve", "promote", "resume")
+        word in t["name"]
+        for t in with_submit
+        for word in ("approve", "attest", "promote", "resume")
     )
 
 

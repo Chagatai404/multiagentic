@@ -10,11 +10,13 @@ node_budgets:              # per-node task budgets (default: the project's budge
   wall_seconds: 900
 limits:                    # optional plan-wide reported-usage stop thresholds
   reported_input_tokens: 500000
+context_reuse: true        # E2: pass dependencies' compact handoffs to dependents (default off)
 nodes:
   - id: core
     description: Add a greet(name) function to src/greeting.py
     acceptance: [greet('Ada') returns 'Hello, Ada!']
     owns: [src/greeting.py]
+    interfaces: ["greeting.greet(name: str) -> str"]   # E2: contract dependents rely on
   - id: docs
     description: Document the greeting module in docs/greeting.md
     acceptance: [The document shows a greet() example]

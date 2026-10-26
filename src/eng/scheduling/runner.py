@@ -19,8 +19,11 @@ from eng.core.engine import Engine
 from eng.core.models import (
     Budgets,
     ClassificationOverrides,
+    DependencyHandoff,
     InvocationRecord,
+    PlanAttestation,
     ProjectConfig,
+    Risk,
     State,
     Task,
     TaskSpec,
@@ -35,13 +38,20 @@ from eng.core.plan import (
     PlanSpec,
     PlanStatus,
     derive_plan_status,
+    node_description,
     node_status_for_task,
+    path_owned,
     ready_nodes,
     resolve_budgets,
     skipped_nodes,
 )
 from eng.core.policy import TERMINAL
-from eng.execution.integrate import create_integration, head
+from eng.core.reuse import (
+    handoff_problem,
+    node_scope_digest,
+    policy_digest,
+)
+from eng.execution.integrate import changed_between, create_integration, head, is_ancestor
 from eng.execution.process import redact
 from eng.execution.workspace import task_lock, try_lock, unlock
 from eng.projects.config import load_config
@@ -69,14 +79,6 @@ class SlotPool:
     @staticmethod
     def release(handle: IO[bytes]) -> None:
         unlock(handle)
-
-
-def node_description(node: PlanNode) -> str:
-    owns = ", ".join(node.spec.owns)
-    return (
-        f"{node.spec.description}\n\nOwnership: you may create or modify only paths matching: "
-        f"{owns}. Any change outside these paths fails the task."
-    )
 
 
 class PlanRunner:
@@ -142,8 +144,114 @@ class PlanRunner:
         finally:
             store.close()
 
+    def _reuse(
+        self, store: Store, plan: PlanRecord, node: PlanNode, config: ProjectConfig
+    ) -> tuple[list[DependencyHandoff], PlanAttestation | None]:
+        """Validate E2 reuse inputs against the launch revision; drop what no longer holds.
+
+        Dropped items fall back to the uncached path (no dependency summary, model
+        planner). The manifest event records exactly what this launch reused and why
+        anything was not.
+        """
+        if not plan.spec.context_reuse and node.attestation is None:
+            return [], None
+        launch = plan.head_commit
+        handoffs: list[DependencyHandoff] = []
+        manifest: list[dict[str, object]] = []
+        if plan.spec.context_reuse:
+            for dependency_id in node.spec.depends_on:
+                handoff = plan.node(dependency_id).handoff
+                later: set[str] = set()
+                if handoff is None:
+                    problem: str | None = "no recorded handoff"
+                else:
+                    problem = handoff_problem(handoff, config)
+                    try:
+                        if problem is None and not is_ancestor(
+                            self.root, handoff.integrated_commit, launch
+                        ):
+                            problem = "integrated commit is not in the launch revision"
+                        if problem is None:
+                            later = set(
+                                changed_between(self.root, handoff.integrated_commit, launch)
+                            )
+                    except ValueError as error:  # unknown commit: invalid, never fatal
+                        problem = "revision check failed: " + redact(str(error))[:200]
+                if handoff is None or problem is not None:
+                    manifest.append({"node": dependency_id, "omitted": problem})
+                    continue
+                reused = handoff.model_copy(
+                    update={"stale_files": [f for f in handoff.changed_files if f in later]}
+                )
+                handoffs.append(reused)
+                manifest.append(
+                    {
+                        "node": dependency_id,
+                        "integrated_commit": reused.integrated_commit,
+                        "digest": reused.digest,
+                        "stale_files": reused.stale_files,
+                    }
+                )
+        attestation = node.attestation
+        attestation_reason: str | None = None
+        if attestation is not None:
+            if (attestation.plan_id, attestation.node_id) != (plan.id, node.spec.id):
+                attestation_reason = "attestation belongs to another plan node"
+            elif attestation.scope_digest != node_scope_digest(node.spec):
+                attestation_reason = "node scope differs from the attested scope"
+            elif attestation.policy_digest != policy_digest(config):
+                attestation_reason = "project verification policy changed since attestation"
+            else:
+                attestation_reason = self._revision_problem(attestation, node, launch)
+            if attestation_reason is not None:
+                store.plan_event(
+                    plan.id,
+                    "attestation_invalidated",
+                    {
+                        "node": node.spec.id,
+                        "attestation_id": attestation.id,
+                        "reason": attestation_reason,
+                    },
+                )
+                attestation = None
+        store.plan_event(
+            plan.id,
+            "context_manifest",
+            {
+                "node": node.spec.id,
+                "revision": launch,
+                "dependencies": manifest,
+                "attestation_id": attestation.id if attestation is not None else None,
+            },
+        )
+        return handoffs, attestation
+
+    def _revision_problem(
+        self, attestation: PlanAttestation, node: PlanNode, launch: str
+    ) -> str | None:
+        try:
+            if not is_ancestor(self.root, attestation.revision, launch):
+                return "attested revision is not in the launch revision"
+            edited = [
+                path
+                for path in changed_between(self.root, attestation.revision, launch)
+                if path_owned(path, node.spec.owns)
+            ]
+        except ValueError as error:  # unknown commit: invalid, never fatal
+            return "revision check failed: " + redact(str(error))[:200]
+        if edited:
+            return "owned paths changed since attestation: " + ", ".join(edited[:10])
+        return None
+
     def _new_task(
-        self, plan: PlanRecord, node: PlanNode, config: ProjectConfig, approve: bool
+        self,
+        plan: PlanRecord,
+        node: PlanNode,
+        config: ProjectConfig,
+        approve: bool,
+        *,
+        dependency_handoffs: list[DependencyHandoff] | None = None,
+        attestation: PlanAttestation | None = None,
     ) -> Task:
         spec = plan.spec
         if node.effective_budgets is None:
@@ -169,7 +277,7 @@ class PlanRunner:
         config = config.model_copy(deep=True)
         config.workflow.max_repairs = node.effective_max_repairs
         task_spec = TaskSpec(
-            description=node_description(node),
+            description=node_description(node.spec),
             acceptance=node.spec.acceptance,
             provider=node.spec.provider or spec.provider or config.provider,
             model=node.spec.model,
@@ -179,6 +287,9 @@ class PlanRunner:
             human_approved=approve,
             owned_paths=node.spec.owns,
             base_commit=plan.head_commit,
+            interfaces=node.spec.interfaces,
+            dependency_handoffs=dependency_handoffs or [],
+            plan_attestation=attestation,
         )
         return Task(project=self.root, spec=task_spec, config=config)
 
@@ -289,7 +400,15 @@ class PlanRunner:
             try:
                 resumed = False
                 if node.task_id is None:
-                    task = self._new_task(plan, node, config, approve)
+                    handoffs, attestation = self._reuse(store, plan, node, config)
+                    task = self._new_task(
+                        plan,
+                        node,
+                        config,
+                        approve,
+                        dependency_handoffs=handoffs,
+                        attestation=attestation,
+                    )
                     node.base_commit = plan.head_commit
                 else:
                     task = store.load(node.task_id)
@@ -438,6 +557,87 @@ class PlanRunner:
                 store.event(task, "human_approved", {"source": "explicit_cli", "plan": plan_id})
             store.plan_event(plan_id, "human_approved", {"source": "explicit_cli", "node": node_id})
             return plan
+
+    def attest(
+        self, store: Store, plan_id: str, node_ids: list[str], *, revoke: bool = False
+    ) -> PlanRecord:
+        """Record or revoke explicit human plan attestations (E2); never model-callable.
+
+        An attestation lets a node's own spec satisfy its initial planner step. It binds
+        the node scope, verification policy and current integration revision. Review,
+        checks, task approval and ownership are unaffected; high-risk nodes are refused.
+        """
+        if not node_ids:
+            raise ValueError("Name at least one node, or use --all")
+        with task_lock(self.root, f"plan-{plan_id}"):
+            plan = store.load_plan(plan_id)
+            if plan.status in {PlanStatus.PROMOTED, PlanStatus.CANCELLED} or plan.cancel_requested:
+                raise ValueError(f"Plan is {plan.status.value}; attestations cannot change")
+            nodes = [plan.node(node_id) for node_id in dict.fromkeys(node_ids)]
+            config = load_config(self.root)
+            # Validate every node before changing anything: all or nothing.
+            for node in nodes:
+                if revoke:
+                    self._revocable(store, node)
+                elif node.task_id is not None:
+                    raise ValueError(
+                        f"Node {node.spec.id} has already launched; attest before launch"
+                    )
+                elif node.spec.risk == Risk.HIGH:
+                    raise ValueError(f"Node {node.spec.id} is high-risk and keeps model planning")
+            for node in nodes:
+                if revoke:
+                    self._revoke(store, plan, node)
+                    continue
+                node.attestation = PlanAttestation(
+                    plan_id=plan.id,
+                    node_id=node.spec.id,
+                    scope_digest=node_scope_digest(node.spec),
+                    policy_digest=policy_digest(config),
+                    revision=plan.head_commit,
+                )
+                store.plan_event(
+                    plan.id,
+                    "plan_attested",
+                    {
+                        "node": node.spec.id,
+                        "attestation_id": node.attestation.id,
+                        "revision": plan.head_commit,
+                        "source": "explicit_cli",
+                    },
+                )
+            store.save_plan(plan)
+            return plan
+
+    @staticmethod
+    def _revocable(store: Store, node: PlanNode) -> Task | None:
+        """The launched task still holding an unconsumed attestation, if any."""
+        if node.attestation is None or node.task_id is None:
+            return None
+        task = store.load(node.task_id)
+        if task.spec.plan_attestation is None:
+            return None  # invalidated at launch; only the plan record remains
+        if task.state in TERMINAL or task.planning_completed:
+            raise ValueError(f"Node {node.spec.id} already completed planning; cannot revoke")
+        return task
+
+    def _revoke(self, store: Store, plan: PlanRecord, node: PlanNode) -> None:
+        if node.attestation is None:
+            return
+        attestation_id = node.attestation.id
+        if node.task_id is not None:
+            with task_lock(self.root, node.task_id):
+                task = self._revocable(store, node)  # recheck under the task lock
+                if task is not None:
+                    task.spec.plan_attestation = None
+                    store.checkpoint(task)
+                    store.event(task, "attestation_revoked", {"source": "explicit_cli"})
+        node.attestation = None
+        store.plan_event(
+            plan.id,
+            "attestation_revoked",
+            {"node": node.spec.id, "attestation_id": attestation_id, "source": "explicit_cli"},
+        )
 
     def cancel(self, store: Store, plan_id: str) -> PlanRecord:
         """Persist cancellation; an idle plan is finalized immediately."""

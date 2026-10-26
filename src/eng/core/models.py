@@ -276,6 +276,50 @@ class ProjectConfig(Contract):
         return checks
 
 
+DIGEST = r"^[0-9a-f]{64}$"
+COMMIT = r"^[0-9a-fA-F]{7,64}$"
+
+
+class PlanAttestation(Contract):
+    """Human statement that a plan node's own spec is its plan (E2).
+
+    Created only by the explicit `eng plan attest` CLI action. It binds the node's
+    packet-visible scope, the project verification policy and the integration revision
+    at which it was granted. Any mismatch falls back to the ordinary model planner; it
+    never satisfies review, checks, task approval or ownership.
+    """
+
+    id: str = Field(default_factory=identity)
+    plan_id: str = Field(min_length=1)
+    node_id: str = Field(min_length=1)
+    scope_digest: str = Field(pattern=DIGEST)
+    policy_digest: str = Field(pattern=DIGEST)
+    revision: str = Field(pattern=COMMIT)
+    source: Literal["explicit_cli"] = "explicit_cli"
+    created_at: str = Field(default_factory=now)
+
+
+class DependencyHandoff(Contract):
+    """Compact typed summary of one integrated plan node, reused by its dependents (E2).
+
+    ``digest`` covers every field except ``stale_files``, which is computed per consumer
+    at launch: dependency files changed again between integration and that launch.
+    """
+
+    node_id: str = Field(min_length=1)
+    task_id: str = Field(min_length=1)
+    node_commit: str = Field(pattern=COMMIT)
+    integrated_commit: str = Field(pattern=COMMIT)
+    summary: str = Field(default="", max_length=1000)
+    review_verdict: Literal["pass", "changes_requested"] | None = None
+    changed_files: list[str] = Field(default_factory=list, max_length=50)
+    files_truncated: bool = False
+    interfaces: list[str] = Field(default_factory=list, max_length=20)
+    policy_digest: str = Field(pattern=DIGEST)
+    digest: str = Field(pattern=DIGEST)
+    stale_files: list[str] = Field(default_factory=list, max_length=50)
+
+
 class TaskSpec(Contract):
     description: str = Field(min_length=1, max_length=64000)
     acceptance: list[str] = Field(min_length=1)
@@ -293,6 +337,10 @@ class TaskSpec(Contract):
     # Start the worktree from this commit instead of the checkout's HEAD (plan nodes
     # start from the integration head so they see their dependencies' integrated work).
     base_commit: str | None = Field(default=None, pattern=r"^[0-9a-fA-F]{7,64}$")
+    # E2 plan context reuse. Empty/None is the uncached path: packets are unchanged.
+    interfaces: list[str] = Field(default_factory=list, max_length=20)
+    dependency_handoffs: list[DependencyHandoff] = Field(default_factory=list, max_length=50)
+    plan_attestation: PlanAttestation | None = None
 
     @field_validator("model")
     @classmethod

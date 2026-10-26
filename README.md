@@ -282,9 +282,10 @@ See [accounting semantics](docs/efficiency/ACCOUNTING_AND_LIMITS.md),
 [budget examples](docs/efficiency/BUDGET_SCHEMA_AND_PRESETS.md),
 [benchmark/calibration protocol](docs/efficiency/BENCHMARKS.md) and
 [large-project runbook](docs/efficiency/LARGE_PROJECT_RUNBOOK.md). E0/E1 cover telemetry
-and configured budgets; [context/approved-plan reuse](docs/efficiency/CONTEXT_AND_PLAN_REUSE.md),
-automatic routing and preset flags remain future work. Offline fixtures do not
-demonstrate real-model cost or quality improvements.
+and configured budgets; E2 adds [dependency handoffs and human plan
+attestations](docs/efficiency/CONTEXT_AND_PLAN_REUSE.md) (`context_reuse: true`,
+`eng plan attest PLAN_ID NODE`). Automatic routing and preset flags remain future
+work. Offline fixtures do not demonstrate real-model cost or quality improvements.
 
 ```sh
 eng usage TASK_ID
@@ -347,6 +348,7 @@ eng plan run PLAN_ID -p .                         # schedule, run, integrate unt
 eng plan status PLAN_ID -p .                      # nodes, events, integration head
 eng plan usage PLAN_ID -p .                       # native usage coverage across all nodes
 eng plan approve PLAN_ID NODE -p .                # explicit high-risk approval for one node
+eng plan attest PLAN_ID NODE -p .                 # human: node spec is its plan (no planner call)
 eng plan resume PLAN_ID -p .                      # relaunch paused nodes, retry blocked integration
 eng plan cancel PLAN_ID -p .
 eng plan promote PLAN_ID -p .                     # dry run: reports every precondition

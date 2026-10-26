@@ -3,6 +3,7 @@ from pathlib import Path
 from eng.agents.registry import get_role
 from eng.context.cache import ContextCache
 from eng.core.models import Role, Task
+from eng.core.reuse import render_dependency_handoff
 from eng.execution.process import redact
 from eng.execution.workspace import git, protected_changes, safe_path
 
@@ -47,6 +48,18 @@ def build_packet(
         remaining -= len(section)
 
     append("Focused failure evidence", evidence, min(4000, remaining // 2))
+    # E2 plan reuse; both are empty on the uncached path, leaving the packet unchanged.
+    append(
+        "Interface contracts to provide",
+        "\n".join(f"- {item}" for item in task.spec.interfaces),
+        2000,
+    )
+    for dependency in task.spec.dependency_handoffs:
+        append(
+            f"Dependency handoff {dependency.node_id}",
+            render_dependency_handoff(dependency),
+            1500,
+        )
     if role in (Role.ENGINEER, Role.DEBUGGER, Role.REVIEWER):
         excluded = {Role.ENGINEER, Role.DEBUGGER} if role == Role.REVIEWER else {Role.ENGINEER}
         relevant = [handoff for handoff in task.handoffs if handoff.role not in excluded]

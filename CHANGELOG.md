@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased - efficiency E2
+
+- Record a digest-bound dependency handoff (summary, review verdict, changed files,
+  interface contracts, policy fingerprint) for every integrated plan node.
+- Add opt-in `context_reuse` plans: launches pass direct dependencies' validated
+  handoffs, mark files changed again since integration and log a `context_manifest`.
+- Add node `interfaces` contracts, rendered in the node's packet and its handoff.
+- Add human-only `eng plan attest` / `--revoke`: a valid attestation replaces only a
+  node's initial planner call; scope, policy, revision or owned-path changes and high
+  risk fall back to the model planner. Review, checks, approval and ownership remain.
+  The MCP server has no attestation tool. Without reuse, packets are unchanged.
+
 ## Unreleased - efficiency E0/E1
 
 - Add usage report schema 2 with native totals/coverage, selected vs actual model

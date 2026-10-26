@@ -1204,6 +1204,43 @@ def plan_approve(plan_id: str, node: str, project: Project = Path(".")) -> None:
             store.close()
 
 
+@plan_app.command("attest")
+def plan_attest(
+    plan_id: str,
+    nodes: Annotated[list[str] | None, typer.Argument(help="Node ids to attest")] = None,
+    all_nodes: Annotated[
+        bool, typer.Option("--all", help="Attest every node not yet launched")
+    ] = False,
+    revoke: Annotated[bool, typer.Option(help="Withdraw the named attestations")] = False,
+    project: Project = Path("."),
+) -> None:
+    """Human attestation: a node's own spec is its plan, so no planner call (E2).
+
+    Binds node scope, verification policy and the current integration revision; any
+    change falls back to the model planner. Review, checks and approval still apply.
+    """
+    store = None
+    try:
+        root = repository_root(project)
+        store = Store(root)
+        selected = list(nodes or [])
+        if all_nodes:
+            plan = store.load_plan(plan_id)
+            for node in plan.nodes:
+                if revoke:  # a launched node's attestation is revoked by naming it
+                    eligible = node.attestation is not None and node.task_id is None
+                else:
+                    eligible = node.task_id is None and node.spec.risk != Risk.HIGH
+                if eligible:
+                    selected.append(node.spec.id)
+        emit(plan_runner(root, load_config(root)).attest(store, plan_id, selected, revoke=revoke))
+    except (ValueError, OSError) as error:
+        fail(error)
+    finally:
+        if store is not None:
+            store.close()
+
+
 @plan_app.command("cancel")
 def plan_cancel(plan_id: str, project: Project = Path(".")) -> None:
     """Persist cancellation; running nodes stop and every workspace is retained."""

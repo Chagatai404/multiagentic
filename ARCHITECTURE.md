@@ -2,7 +2,7 @@
 
 Dependency direction: CLI → engine shell → subsystem contracts and adapters. The
 functional core is `core/models.py`, `core/policy.py`, `core/accounting.py`, `core/workflow.py`,
-`core/plan.py` and `core/refs.py`: Pydantic
+`core/plan.py`, `core/reuse.py` and `core/refs.py`: Pydantic
 contracts, legal transitions, and evidence-based completion. `core/engine.py` is
 explicitly the imperative orchestration shell; it injects a Provider and Store.
 Models/policy import no provider, subprocess, filesystem execution, or storage code.
@@ -261,7 +261,14 @@ and recheck aggregate invocation coverage before each role side effect; unknown
 outcomes block subsequent work. No token/cost reservation estimate is invented and
 in-flight overshoot remains possible. Provider-free `plan preview` applies pure
 classification/budget resolution and labels role projections hypothetical.
-See `docs/efficiency/` for schema and recovery boundaries. E2–E5 are deferred.
+See `docs/efficiency/` for schema and recovery boundaries.
+E2 (`core/reuse.py`, pure) records a digest-bound dependency handoff when a node
+integrates. With plan `context_reuse`, a launch revalidates its direct dependencies'
+handoffs against the launch revision and policy fingerprint, marks re-changed files
+stale and logs a `context_manifest`. Human-only `plan attest` binds node scope, policy
+and revision; the coordinator and engine both revalidate it, and a valid one replaces
+only the initial planner call. Any failed binding falls back to the uncached path.
+E3–E5 are deferred.
 
 **Integration** (`execution/integrate.py`, `scheduling/integration.py`). A completed
 node's worktree is captured as a commit object through a temporary index (the worktree is

@@ -18,6 +18,8 @@ from pydantic import Field, field_validator, model_validator
 from eng.core.models import (
     Budgets,
     Contract,
+    DependencyHandoff,
+    PlanAttestation,
     Risk,
     Role,
     RoleLimits,
@@ -214,6 +216,8 @@ class PlanNodeSpec(Contract):
     risk: Risk | None = None
     budgets: BudgetOverrides | None = None
     max_repairs: int | None = Field(default=None, ge=0, le=10)
+    # Interface contracts this node provides to its dependents (E2); part of its scope.
+    interfaces: list[str] = Field(default_factory=list, max_length=20)
 
     @field_validator("id")
     @classmethod
@@ -236,6 +240,13 @@ class PlanNodeSpec(Contract):
             raise ValueError("acceptance criteria cannot be blank")
         return value
 
+    @field_validator("interfaces")
+    @classmethod
+    def bounded_interfaces(cls, value: list[str]) -> list[str]:
+        if any(not item.strip() or len(item) > 500 for item in value):
+            raise ValueError("interface contracts must be nonblank and at most 500 characters")
+        return value
+
     @field_validator("owns")
     @classmethod
     def normalized_owns(cls, value: list[str]) -> list[str]:
@@ -250,6 +261,9 @@ class PlanSpec(Contract):
     node_budgets: BudgetOverrides | None = None
     node_max_repairs: int | None = Field(default=None, ge=0, le=10)
     limits: PlanLimits = Field(default_factory=PlanLimits)
+    # E2: pass compact typed handoffs of integrated direct dependencies to each node.
+    # Off by default; off is the deterministic uncached path.
+    context_reuse: bool = False
 
     @model_validator(mode="after")
     def valid_graph(self) -> "PlanSpec":
@@ -349,6 +363,14 @@ def skipped_nodes(spec: PlanSpec, statuses: Mapping[str, NodeStatus]) -> list[st
     ]
 
 
+def node_description(spec: PlanNodeSpec) -> str:
+    owns = ", ".join(spec.owns)
+    return (
+        f"{spec.description}\n\nOwnership: you may create or modify only paths matching: "
+        f"{owns}. Any change outside these paths fails the task."
+    )
+
+
 def node_status_for_task(state: State) -> NodeStatus:
     return {
         State.COMPLETED: NodeStatus.VERIFIED,
@@ -391,6 +413,10 @@ class PlanNode(Contract):
     # None is a legacy record, resolved and persisted when its task is first created.
     effective_budgets: Budgets | None = None
     effective_max_repairs: int | None = Field(default=None, ge=0, le=10)
+    # E2 durable summary index entry, recorded when the node integrates.
+    handoff: DependencyHandoff | None = None
+    # E2 human plan attestation; validated again at launch and by the engine.
+    attestation: PlanAttestation | None = None
 
 
 class PlanRecord(Contract):

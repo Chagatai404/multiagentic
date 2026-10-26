@@ -24,6 +24,7 @@ from eng.core.models import (
 )
 from eng.core.plan import outside_ownership
 from eng.core.policy import TERMINAL, completion_gate
+from eng.core.reuse import attestation_problem, attested_planner_handoff
 from eng.core.workflow import (
     classify_task,
     escalate_classification,
@@ -403,6 +404,12 @@ class Engine:
                             "before further model calls",
                         )
                         break
+                    if (
+                        role == Role.PLANNER
+                        and task.checkpoint == "prepared"
+                        and self._attested_planning(task)
+                    ):
+                        continue
                     if not await self._invoke(
                         task, role, directory, cancelled, remaining, evidence, context_cache
                     ):
@@ -613,6 +620,42 @@ class Engine:
             task.review_passed = handoff.verdict == "pass"
             task.review_digest = workspace_digest(task.workspace) if task.review_passed else None
         self.store.complete_invocation(task, result.model_dump_json(), invocation_id, role)
+        return True
+
+    def _attested_planning(self, task: Task) -> bool:
+        """Satisfy initial planning from a valid human plan attestation, without a call.
+
+        Only before any implementation ("prepared"): planning that changed paths make
+        due later is changed-scope reasoning and always uses the model planner.
+        """
+        attestation = task.spec.plan_attestation
+        if attestation is None:
+            return False
+        problem = attestation_problem(attestation, task.spec, task.config, task.classification)
+        if problem is not None:
+            self.store.event(
+                task,
+                "attestation_rejected",
+                {"attestation_id": attestation.id, "reason": problem},
+            )
+            return False
+        self._transition(task, State.PLANNING, "Planning satisfied by human plan attestation")
+        task.handoffs.append(attested_planner_handoff(attestation))
+        task.planning_completed = True
+        task.checkpoint = "planned"
+        task.next_role = Role.ENGINEER
+        self.store.event(
+            task,
+            "planning_attested",
+            {
+                "attestation_id": attestation.id,
+                "plan": attestation.plan_id,
+                "node": attestation.node_id,
+                "revision": attestation.revision,
+                "source": attestation.source,
+            },
+        )
+        self.store.checkpoint(task)
         return True
 
     def _schedule_repair(self, task: Task, signature: str, reason: str) -> bool:

@@ -39,9 +39,13 @@ Later milestones must not weaken completion or recovery guarantees to improve sp
   inherited per-node budgets, subordinate role limits, saved allocations, conservative
   plan-wide launch/call stops and a provider-free hypothetical preview. Validation
   evidence is recorded in `docs/VALIDATION.md`; no paid-model savings are claimed.
-- **Efficiency E2–E5 — deferred:** dependency-scoped durable context/approved planning
-  reuse, evidence-based automatic routing, additional retry optimizations and preset
-  flags. Existing in-memory cache remains off by default.
+- **Efficiency E2 — verified offline:** digest-bound dependency handoff index,
+  opt-in dependency-scoped packets with stale-file marking, declared interface
+  contracts, and human `eng plan attest` attestations that replace only a node's
+  initial planner call, invalidated on scope, policy, revision or owned-path change.
+  Review, checks, approval and ownership are unchanged; no live savings are claimed.
+- **Efficiency E3–E5 — deferred:** evidence-based automatic routing, additional retry
+  optimizations and preset flags. Existing in-memory cache remains off by default.
 
 Provider tool/turn usage and hard in-flight spend caps remain unsupported. Successful
 live model editing, live-client hook firing and real CI-service delivery are not
