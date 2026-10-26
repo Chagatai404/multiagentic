@@ -76,6 +76,11 @@ class ClassificationOverrides(Contract):
 
 class WorkflowPolicy(Contract):
     max_repairs: int = Field(default=2, ge=0, le=10)
+    # E4 opt-in repair economies; neither drops a required role, check or inspection.
+    # Admit a repair only if calls remain for the debugger and any required review.
+    repair_headroom: bool = False
+    # Pause, instead of re-checking/re-reviewing, when a repair changed nothing.
+    stop_unchanged_repairs: bool = False
 
 
 class WorkflowDecision(Contract):
@@ -101,6 +106,8 @@ class RepairAttempt(Contract):
     number: int = Field(ge=1)
     failure_signature: str
     handoff: RoleHandoff | None = None
+    # E4: workspace digest when the repair was scheduled; None for legacy attempts.
+    base_digest: str | None = None
 
 
 class Usage(Contract):

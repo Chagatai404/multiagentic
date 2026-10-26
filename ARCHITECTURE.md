@@ -272,7 +272,10 @@ E3 (`core/routing.py`, pure) applies explicit operator `routing` rules: the engi
 selects each role's model from the current classification (explicit model first,
 `role_models` last) and skips routes a provider without `model_selection` cannot
 honour; providers are routed once at task/node creation and frozen per plan node.
-Every decision is an event; routing never alters workflow gates. E4–E5 are deferred.
+Every decision is an event; routing never alters workflow gates. E4 adds opt-in
+`workflow.repair_headroom` (repair admission requires calls/allocations for the
+debugger and any required review) and `workflow.stop_unchanged_repairs` (repairs
+record a base digest; an unchanged tree pauses at `implemented`). E5 is deferred.
 
 **Integration** (`execution/integrate.py`, `scheduling/integration.py`). A completed
 node's worktree is captured as a commit object through a temporary index (the worktree is

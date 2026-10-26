@@ -43,6 +43,8 @@ as explicit CLI actions. Verifier is excluded; no MCP/model recovery action is a
 | `reported_cost_usd` | Provider-reported-cost threshold only |
 | `role_limits` | Optional role call/token/cost sublimits, subordinate to task totals |
 | `max_repairs` / `node_max_repairs` | Node / plan repair ceiling, 0–10; cannot waive required review or checks |
+| `workflow.repair_headroom` | E4 opt-in: start a repair only if calls/allocations remain for debugger and required review |
+| `workflow.stop_unchanged_repairs` | E4 opt-in: pause when a repair leaves the workspace unchanged |
 
 `role_limits` accepts planner, engineer, debugger and reviewer. Verifier executes
 configured checks and cannot receive model allocations. Role limits never increase

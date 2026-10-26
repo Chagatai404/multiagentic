@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased - efficiency E4
+
+- Add opt-in `workflow.repair_headroom`: admit a repair only when remaining calls and
+  role allocations cover the debugger and any required review.
+- Add opt-in `workflow.stop_unchanged_repairs`: repairs record a base digest and pause
+  (`repair_unchanged`) instead of re-checking or re-reviewing an unchanged tree.
+- Both default off; existing repair, review, approval and recovery behaviour is kept.
+
 ## Unreleased - efficiency E3
 
 - Add explicit `routing` rules (task type, complexity, risk, role) to project/user

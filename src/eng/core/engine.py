@@ -415,6 +415,8 @@ class Engine:
                         task, role, directory, cancelled, remaining, evidence, context_cache
                     ):
                         break
+                    if role == Role.DEBUGGER and self._repair_unchanged(task):
+                        break
                     if role == Role.REVIEWER:
                         handoff = task.handoffs[-1]
                         if handoff.verdict == "changes_requested":
@@ -705,31 +707,87 @@ class Engine:
         if len(task.repairs) >= task.workflow.max_repairs:
             self._transition(task, State.BLOCKED, "Repair limit reached; " + reason)
             return False
-        exhausted = task.provider_calls >= task.spec.budgets.model_calls
-        if exhausted and not signature.startswith("review:"):
+        shortfall = self._repair_shortfall(task)
+        if shortfall and not signature.startswith("review:"):
             # Resume re-runs checks first, so failed checks need no durable pending repair.
             self._transition(
                 task,
                 State.BLOCKED,
-                reason
-                + "; model-call budget exhausted, extend explicitly or inspect and resume checks",
+                f"{reason}; {shortfall}, extend explicitly or inspect and resume checks",
             )
             return False
+        assert task.workspace is not None
         task.repairs.append(
-            RepairAttempt(number=len(task.repairs) + 1, failure_signature=signature)
+            RepairAttempt(
+                number=len(task.repairs) + 1,
+                failure_signature=signature,
+                base_digest=workspace_digest(task.workspace),
+            )
         )
         task.next_role = Role.DEBUGGER
         self.store.checkpoint(task)  # retry consumed BEFORE the debugger side effect
-        if exhausted:
+        if shortfall:
             # Review findings are only reproducible by another model call, so keep the
             # repair pending: an explicit extension runs the debugger, not a fresh review.
             self._transition(
-                task,
-                State.PAUSED,
-                reason + "; model-call budget exhausted, extend explicitly to run debugger",
+                task, State.PAUSED, f"{reason}; {shortfall}, extend explicitly to run debugger"
             )
             return False
         return True
+
+    def _repair_unchanged(self, task: Task) -> bool:
+        """Pause when a repair left the workspace byte-identical (E4).
+
+        Re-running deterministic checks or re-reviewing an unchanged tree cannot change
+        the outcome deterministically and a re-review costs a model call. The task stays
+        at `implemented`: resume re-runs checks after human inspection or edits.
+        """
+        attempt = task.repairs[-1] if task.repairs else None
+        if (
+            not task.config.workflow.stop_unchanged_repairs
+            or attempt is None
+            or attempt.base_digest is None
+            or task.workspace is None
+        ):
+            return False
+        if workspace_digest(task.workspace) != attempt.base_digest:
+            return False
+        self.store.event(task, "repair_unchanged", {"attempt": attempt.number})
+        self._transition(
+            task,
+            State.PAUSED,
+            "Repair made no workspace changes; inspect or edit, then resume to re-run checks",
+        )
+        return True
+
+    def _repair_shortfall(self, task: Task) -> str | None:
+        """Why a repair could not reach its required follow-up roles, or None (E4).
+
+        A repair is the debugger plus, when review is required, a fresh review of the
+        repaired tree. Starting a debugger call that the configured allowance cannot
+        follow with that review only spends money before the same pause.
+        """
+        assert task.workflow is not None
+        available = task.spec.budgets.model_calls - task.provider_calls
+        if not task.config.workflow.repair_headroom:
+            return "model-call budget exhausted" if available <= 0 else None
+        needed = 2 if task.workflow.reviewer else 1
+        if available < needed:
+            if available <= 0:
+                return "model-call budget exhausted"
+            return (
+                f"repair needs {needed} model calls (debugger and required review); "
+                f"{available} remain"
+            )
+        records = self.store.invocations(task.id)
+        roles = (Role.DEBUGGER, Role.REVIEWER) if task.workflow.reviewer else (Role.DEBUGGER,)
+        for role in roles:
+            allocation = task.spec.budgets.role_limits.get(role)
+            if allocation is not None and allocation.model_calls is not None:
+                used = sum(1 for record in records if record.role == role)
+                if used >= allocation.model_calls:
+                    return f"role {role.value} CLI invocation allocation exhausted"
+        return None
 
     @staticmethod
     def _review_evidence(findings: list[str]) -> str:

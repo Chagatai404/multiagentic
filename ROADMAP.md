@@ -48,8 +48,12 @@ Later milestones must not weaken completion or recovery guarantees to improve sp
   per role call (re-evaluated after risk escalation) and providers per task or plan
   node, with capability validation and recorded decisions. Explicit selections win;
   workflow gates are unchanged. No route is shown to save cost or keep quality.
-- **Efficiency E4–E5 — deferred:** additional retry optimizations and preset flags.
-  Existing in-memory cache remains off by default.
+- **Efficiency E4 — verified offline:** opt-in `repair_headroom` (admit repairs only
+  when the debugger and required review fit the remaining calls/allocations) and
+  `stop_unchanged_repairs` (pause instead of re-checking/re-reviewing an unchanged
+  tree). Defaults are unchanged; no required role, check or inspection is dropped.
+- **Efficiency E5 — deferred:** preset flags. Existing in-memory cache remains off by
+  default.
 
 Provider tool/turn usage and hard in-flight spend caps remain unsupported. Successful
 live model editing, live-client hook firing and real CI-service delivery are not
