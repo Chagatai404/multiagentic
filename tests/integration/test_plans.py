@@ -98,6 +98,22 @@ def run_plan(
     return runner, store, runner.run(plan.id, **options)
 
 
+def node_concurrency(store: Store, plan_id: str) -> int:
+    """Peak number of nodes between node_started and node_finished, from recorded events.
+
+    Unlike overlap inside the provider call (a short slice of a node's life that depends
+    on machine speed), this measures how many nodes the coordinator really had in flight.
+    """
+    running = peak = 0
+    for event in store.plan_events(plan_id):
+        if event["kind"] == "node_started":
+            running += 1
+            peak = max(peak, running)
+        elif event["kind"] == "node_finished":
+            running -= 1
+    return peak
+
+
 def main_is_clean(repo: Path) -> bool:
     return git(repo, "status", "--porcelain", "--untracked-files=normal") == ""
 
@@ -116,7 +132,8 @@ def test_independent_nodes_run_concurrently_and_integrate(plan_repo: Path) -> No
     _, store, plan = run_plan(plan_repo, spec, provider)
     assert plan.status == PlanStatus.READY, plan.message
     assert [n.status for n in plan.nodes] == [NodeStatus.INTEGRATED] * 4
-    assert 2 <= tracker.peak <= 3
+    assert 2 <= node_concurrency(store, plan.id) <= 3
+    assert tracker.peak <= 3
     assert tracker.bases["d"] is True  # dependent started from the integrated head
     assert tracker.bases["a"] is False
     assert plan.final_verified and plan.head_commit != base
@@ -141,6 +158,7 @@ def test_concurrency_one_serializes_nodes(plan_repo: Path) -> None:
     )
     _, store, plan = run_plan(plan_repo, spec, provider)
     assert plan.status == PlanStatus.READY and tracker.peak == 1
+    assert node_concurrency(store, plan.id) == 1
     store.close()
 
 
@@ -432,7 +450,8 @@ def test_large_plan_never_exceeds_three_and_integrates_everything(plan_repo: Pat
     provider = NodeProvider(edits, tracker, delay=0.15)
     _, store, plan = run_plan(plan_repo, spec_of(*nodes), provider)
     assert plan.status == PlanStatus.READY, plan.message
-    assert tracker.peak == 3  # saturated, never above the cap
+    assert node_concurrency(store, plan.id) == 3  # saturated at the cap, never above it
+    assert tracker.peak <= 3
     tree = set(git(plan_repo, "ls-tree", "-r", "--name-only", plan.branch).splitlines())
     assert {f"files/{n}.txt" for n in edits} <= tree
     log = git(plan_repo, "log", "--format=%s", plan.branch).splitlines()
@@ -460,6 +479,17 @@ def test_two_plans_share_the_project_wide_slot_cap(plan_repo: Path) -> None:
         thread.join(timeout=120)
     assert {r.status for r in results.values()} == {PlanStatus.READY}
     assert tracker.peak <= 3  # two coordinators, one shared cap
+    merged = sorted(
+        (e for p in (first, second) for e in store.plan_events(p.id)), key=lambda e: e["at"]
+    )
+    running = peak = 0
+    for event in merged:
+        if event["kind"] == "node_started":
+            running += 1
+            peak = max(peak, running)
+        elif event["kind"] == "node_finished":
+            running -= 1
+    assert 2 <= peak <= 3  # combined in-flight nodes across both plans
     store.close()
 
 

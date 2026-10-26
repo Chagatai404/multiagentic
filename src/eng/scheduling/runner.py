@@ -206,20 +206,24 @@ class PlanRunner:
         def collect(done: set[Future[str]]) -> None:
             for future in done:
                 node_id, slot = futures.pop(future)
-                pool.release(slot)
                 node = plan.node(node_id)
                 try:
-                    future.result()
-                    task = store.load(node.task_id or "")
-                    node.status = node_status_for_task(task.state)
-                    node.message = task.message
-                except Exception as error:  # noqa: BLE001 - surfaced as a blocked node
-                    node.status = NodeStatus.BLOCKED
-                    node.message = redact(f"Node runner error: {error}")
-                store.plan_event(
-                    plan.id, "node_finished", {"node": node_id, "status": node.status.value}
-                )
-                store.save_plan(plan)
+                    try:
+                        future.result()
+                        task = store.load(node.task_id or "")
+                        node.status = node_status_for_task(task.state)
+                        node.message = task.message
+                    except Exception as error:  # noqa: BLE001 - surfaced as a blocked node
+                        node.status = NodeStatus.BLOCKED
+                        node.message = redact(f"Node runner error: {error}")
+                    store.plan_event(
+                        plan.id, "node_finished", {"node": node_id, "status": node.status.value}
+                    )
+                    store.save_plan(plan)
+                finally:
+                    # Release only after the finish is recorded: the event log must never
+                    # show more nodes in flight than slots that were really held.
+                    pool.release(slot)
 
         def launch(node: PlanNode) -> bool:
             slot = pool.acquire()
