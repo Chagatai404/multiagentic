@@ -68,9 +68,10 @@ Start with the [README](../README.md); design is in [ARCHITECTURE](../ARCHITECTU
 | MCP official-SDK interoperability | pass (mcp 2.3.0, scratch env) |
 | GitHub Actions on the pushed branch (ubuntu/windows x 3.12/3.14, MCP, package) | pass, run 9 on `c4cd75d` (6/6 jobs); earlier runs 7-8 found two test-side issues, fixed |
 | Live provider smoke test with credentials | **not run - owner action** (`ENG_LIVE_CODEX=1` for Codex) |
-| Merge to `main` and Git tag `v1.0.0` | done (fast-forward of this branch; tag on the merge commit) |
-| GitHub Release page / package index upload | **not done - owner action** (no credentials here) |
+| Merge to `main`, Git tag `v1.0.0`, GitHub Release | done: fast-forward merge, then the manual `release` workflow tagged `cc4d2d4` and attached the sdist and wheel |
+| Package index (PyPI) upload | **not done - owner action** (no credentials here) |
 
-Remaining publishing steps (not performed): run a bounded live trial with your provider,
-create a GitHub Release from the `v1.0.0` tag, then `python -m build` and upload with your
-package-index credentials.
+Remaining steps (not performed): run a bounded live trial with your provider, and if you
+want a package-index release, upload the artifacts attached to the `v1.0.0` release (or
+`python -m build`) with your credentials. Note the release page's bundled copy of these
+notes predates this edit and still lists the Release as pending.
