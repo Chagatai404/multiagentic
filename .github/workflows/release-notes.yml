@@ -1,0 +1,24 @@
+name: release-notes
+# Manual, maintainer-triggered: replaces an existing GitHub Release's notes with the current
+# docs/RELEASE.md from main. It changes no tag, asset or code.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag whose notes to refresh
+        required: true
+        default: v1.0.0
+permissions:
+  contents: write
+jobs:
+  notes:
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Refresh the release notes
+        run: gh release edit "$TAG" --notes-file docs/RELEASE.md
