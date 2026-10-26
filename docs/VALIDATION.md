@@ -1,5 +1,12 @@
 # Validation evidence — 2026-10-25
 
+## Efficiency E2 checkpoint — 2026-10-26
+
+Dependency handoffs, opt-in dependency-scoped context, interface contracts and human
+plan attestations: 683 passed, 2 skipped, 1 deselected offline on Linux; Ruff, strict
+mypy and package build passed. See `docs/efficiency/VERIFICATION_E2.md` and
+`docs/efficiency/ADR-002.md`. No live/paid validation.
+
 ## Efficiency E0/E1 working slice — 2026-10-26
 
 Implementation started after the small ADR and five unchanged-behavior baseline

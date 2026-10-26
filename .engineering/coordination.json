@@ -1,10 +1,10 @@
 {
-  "milestone": "E0/E1 efficiency verified checkpoint",
-  "branch": "agent/codex/efficiency-e0-e1",
-  "base_commit": "e7a2c5b",
+  "milestone": "E2 efficiency verified checkpoint",
+  "branch": "claude/funny-hamilton-p4v8ki",
+  "base_commit": "1090be9",
   "active_agent": "none",
   "phase": "paused_after_verified_checkpoint",
-  "note": "E0 honest telemetry and E1 conservative node budgets completed and independently reviewed. User requested stop after this verified checkpoint. Both the installer base and E0/E1 checkpoint remain local; no push, paid/live calls, deployment, promotion or approval self-grants. E2 begins only when the user resumes.",
+  "note": "E2 dependency handoffs, opt-in dependency-scoped context, interface contracts and human-only plan attestations implemented by Claude on top of the E0/E1 checkpoint; see docs/efficiency/ADR-002.md. Commits are local only; no push, paid/live calls, deployment, promotion or approval self-grants. E3 begins only when the user resumes.",
   "owners": {},
   "rules": [
     "No paid model calls without owner action",
@@ -12,5 +12,5 @@
     "No automatic push",
     "Approvals and promotion are human CLI actions only"
   ],
-  "verification": "668 passed, 1 skipped (optional MCP SDK absent), 1 deselected (paid live excluded), 1130.41 seconds; Ruff passed; strict mypy passed (52 sources); wheel and sdist build plus isolated installed-wheel fake task/schema-2/side-effect-free preview smoke passed. Final docs-inclusive archives rebuilt and byte-verified. Independent review resolved three findings, no blocking issues; post-fix 32 E1 and 24 CLI/telemetry tests passed. Runtime/test/build SHA-256: 12e81d1359d25741a67c41450652cac7b68a50579493fbb731dfdb1f42b88faf. See docs/efficiency/VERIFICATION.md."
+  "verification": "Linux/CPython 3.13: 683 passed, 2 skipped (optional MCP SDK absent; Windows-only job breakaway), 1 deselected (paid live excluded), 118.75 seconds; Ruff passed; strict mypy passed (53 sources); wheel and sdist build plus isolated installed-wheel smoke passed. Windows not rerun for E2; no independent reviewer pass. See docs/efficiency/VERIFICATION_E2.md."
 }
