@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased - efficiency E5
+
+- Add `eng run --preset` and plan `preset` (economy, balanced, rigorous): repair
+  ceiling, E4 repair economies and packet cap, with model calls derived from required
+  roles plus allowed repairs. Explicit options and plan/node settings win.
+- Freeze each plan node's workflow (`effective_workflow`) at creation; show presets
+  and repair economies in `eng plan preview`; record `spec.preset` on tasks.
+- Presets never change classification, review, approval, checks, ownership,
+  thresholds, routing or concurrency. No optimality claim; dashboards unchanged.
+
 ## Unreleased - efficiency E4
 
 - Add opt-in `workflow.repair_headroom`: admit a repair only when remaining calls and

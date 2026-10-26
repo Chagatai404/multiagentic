@@ -285,8 +285,8 @@ See [accounting semantics](docs/efficiency/ACCOUNTING_AND_LIMITS.md),
 and configured budgets; E2 adds [dependency handoffs and human plan
 attestations](docs/efficiency/CONTEXT_AND_PLAN_REUSE.md) (`context_reuse: true`,
 `eng plan attest PLAN_ID NODE`). E3 adds explicit
-[classification routing](docs/efficiency/ROUTING.md). Preset flags remain future
-work. Offline fixtures do not demonstrate real-model cost or quality improvements.
+[classification routing](docs/efficiency/ROUTING.md), E4 opt-in repair economies and
+E5 `--preset economy|balanced|rigorous` ([ADR-005](docs/efficiency/ADR-005.md)). Offline fixtures do not demonstrate real-model cost or quality improvements.
 
 ```sh
 eng usage TASK_ID

@@ -61,6 +61,14 @@ class Risk(StrEnum):
     HIGH = "high"
 
 
+class Preset(StrEnum):
+    """E5 operating presets; see core/presets.py for what each one sets."""
+
+    ECONOMY = "economy"
+    BALANCED = "balanced"
+    RIGOROUS = "rigorous"
+
+
 class Classification(Contract):
     task_type: TaskType
     complexity: Complexity
@@ -395,6 +403,8 @@ class TaskSpec(Contract):
     interfaces: list[str] = Field(default_factory=list, max_length=20)
     dependency_handoffs: list[DependencyHandoff] = Field(default_factory=list, max_length=50)
     plan_attestation: PlanAttestation | None = None
+    # E5: preset applied at creation (audit only; its effects are already resolved).
+    preset: Preset | None = None
 
     @field_validator("model")
     @classmethod

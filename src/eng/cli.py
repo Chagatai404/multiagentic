@@ -18,6 +18,7 @@ from eng.core.models import (
     CommandProviderConfig,
     Complexity,
     InvocationRecord,
+    Preset,
     ProjectConfig,
     Risk,
     Role,
@@ -27,8 +28,9 @@ from eng.core.models import (
     TaskType,
     now,
 )
-from eng.core.plan import PlanSpec, PlanStatus, resolve_budgets, topological_order
+from eng.core.plan import PlanSpec, PlanStatus, topological_order
 from eng.core.policy import TERMINAL
+from eng.core.presets import apply_preset, node_allocation
 from eng.core.refs import CIConclusion, CIEvent, ci_bypass, ci_description, ci_idempotency
 from eng.core.routing import (
     RouteDecision,
@@ -187,6 +189,10 @@ def run(
     approve_high_risk: Annotated[
         bool, typer.Option(help="Explicitly approve this high-risk task")
     ] = False,
+    preset: Annotated[
+        Preset | None,
+        typer.Option(help="Operating preset (calls from required roles); explicit options win"),
+    ] = None,
 ) -> None:
     """Run an adaptive workflow with deterministic checks; print the persisted task."""
     store = None
@@ -195,7 +201,18 @@ def run(
             raise ValueError("Nested eng execution is disabled")
         root = repository_root(project)
         config = load_config(root, user_config)
+        overrides = ClassificationOverrides(task_type=task_type, complexity=complexity, risk=risk)
         budget = config.budgets.model_copy(deep=True)
+        if preset is not None:
+            draft = TaskSpec(
+                description=description,
+                acceptance=accept,
+                context_paths=context or [],
+                classification_overrides=overrides,
+            )
+            budget, config.workflow = apply_preset(
+                preset, budget, config.workflow, classify_task(draft)
+            )
         if wall_seconds is not None:
             budget.wall_seconds = wall_seconds
         if provider_seconds is not None:
@@ -217,12 +234,9 @@ def run(
             model=model,
             context_paths=context or [],
             budgets=budget,
-            classification_overrides=ClassificationOverrides(
-                task_type=task_type,
-                complexity=complexity,
-                risk=risk,
-            ),
+            classification_overrides=overrides,
             human_approved=approve_high_risk,
+            preset=preset,
         )
         name, routed = select_provider(
             provider, config.routing, classify_task(spec), config.provider
@@ -1044,14 +1058,7 @@ def plan_preview(
         nodes = []
         minimum_calls = 0
         for node in spec.nodes:
-            budgets = resolve_budgets(config.budgets, spec.node_budgets, node.budgets)
-            max_repairs = (
-                node.max_repairs
-                if node.max_repairs is not None
-                else spec.node_max_repairs
-                if spec.node_max_repairs is not None
-                else config.workflow.max_repairs
-            )
+            budgets, max_repairs, node_workflow = node_allocation(config, spec, node)
             task_spec = TaskSpec(
                 description=node.description + "\n\nOwnership: you may create or modify only "
                 "paths matching: "
@@ -1090,6 +1097,8 @@ def plan_preview(
                     "id": node.id,
                     "effective_budgets": budgets.model_dump(mode="json"),
                     "effective_max_repairs": max_repairs,
+                    "repair_headroom": node_workflow.repair_headroom,
+                    "stop_unchanged_repairs": node_workflow.stop_unchanged_repairs,
                     "minimum_role_calls": len(roles),
                     "roles": roles,
                     "classification": classification.model_dump(mode="json"),
@@ -1120,6 +1129,7 @@ def plan_preview(
                 "name": spec.name,
                 "order": topological_order(spec),
                 "concurrency": spec.concurrency,
+                "preset": spec.preset,
                 "effective_launch_concurrency": 1 if limited else spec.concurrency,
                 "limits": spec.limits.model_dump(mode="json"),
                 "nodes": nodes,

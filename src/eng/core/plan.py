@@ -20,11 +20,13 @@ from eng.core.models import (
     Contract,
     DependencyHandoff,
     PlanAttestation,
+    Preset,
     Risk,
     Role,
     RoleLimits,
     State,
     VerificationResult,
+    WorkflowPolicy,
     identity,
     now,
 )
@@ -264,6 +266,8 @@ class PlanSpec(Contract):
     # E2: pass compact typed handoffs of integrated direct dependencies to each node.
     # Off by default; off is the deterministic uncached path.
     context_reuse: bool = False
+    # E5: named preset applied beneath node_budgets/node settings; None keeps E4 behaviour.
+    preset: Preset | None = None
 
     @model_validator(mode="after")
     def valid_graph(self) -> "PlanSpec":
@@ -413,6 +417,8 @@ class PlanNode(Contract):
     # None is a legacy record, resolved and persisted when its task is first created.
     effective_budgets: Budgets | None = None
     effective_max_repairs: int | None = Field(default=None, ge=0, le=10)
+    # E5 workflow (repair economies) resolved at creation; None uses the launch config.
+    effective_workflow: WorkflowPolicy | None = None
     # E3 provider resolved at creation (explicit node/plan, route, or project default).
     # None is a legacy record: resolve as before at launch.
     effective_provider: str | None = None

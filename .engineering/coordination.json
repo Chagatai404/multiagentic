@@ -1,10 +1,10 @@
 {
-  "milestone": "E2 efficiency verified checkpoint",
-  "branch": "claude/funny-hamilton-p4v8ki",
+  "milestone": "E2-E5 efficiency verified checkpoint",
+  "branch": "claude/efficiency-e3-5",
   "base_commit": "1090be9",
   "active_agent": "none",
   "phase": "paused_after_verified_checkpoint",
-  "note": "E2 dependency handoffs, opt-in dependency-scoped context, interface contracts and human-only plan attestations implemented by Claude on top of the E0/E1 checkpoint; see docs/efficiency/ADR-002.md. Commits are local only; no push, paid/live calls, deployment, promotion or approval self-grants. E3 begins only when the user resumes.",
+  "note": "E2 reuse/attestations, E3 explicit routing, E4 opt-in repair economies and E5 presets implemented by Claude on top of the E0/E1 checkpoint; ADR-002..005 under docs/efficiency. Branch pushed at the owner's request; no paid/live calls, deployment, promotion or approval self-grants.",
   "owners": {},
   "rules": [
     "No paid model calls without owner action",
@@ -12,5 +12,5 @@
     "No automatic push",
     "Approvals and promotion are human CLI actions only"
   ],
-  "verification": "Linux/CPython 3.13: 683 passed, 2 skipped (optional MCP SDK absent; Windows-only job breakaway), 1 deselected (paid live excluded), 118.75 seconds; Ruff passed; strict mypy passed (53 sources); wheel and sdist build plus isolated installed-wheel smoke passed. Windows not rerun for E2; no independent reviewer pass. See docs/efficiency/VERIFICATION_E2.md."
+  "verification": "Linux/CPython 3.13: 713 passed, 2 skipped (optional MCP SDK absent; Windows-only job breakaway), 1 deselected (paid live excluded); Ruff and strict mypy (55 sources) passed; wheel/sdist build and isolated installed-wheel smoke passed. Windows not rerun for E2-E5; no independent reviewer pass. See docs/efficiency/VERIFICATION_E2.md and VERIFICATION_E3_E5.md."
 }

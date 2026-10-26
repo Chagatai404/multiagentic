@@ -52,8 +52,10 @@ Later milestones must not weaken completion or recovery guarantees to improve sp
   when the debugger and required review fit the remaining calls/allocations) and
   `stop_unchanged_repairs` (pause instead of re-checking/re-reviewing an unchanged
   tree). Defaults are unchanged; no required role, check or inspection is dropped.
-- **Efficiency E5 — deferred:** preset flags. Existing in-memory cache remains off by
-  default.
+- **Efficiency E5 — verified offline:** `--preset` / plan `preset` economy, balanced and
+  rigorous bundles; calls derived from required roles plus allowed repairs, explicit
+  settings win. Not evidence of optimality. Expanded dashboards were not added;
+  existing in-memory cache remains off by default.
 
 Provider tool/turn usage and hard in-flight spend caps remain unsupported. Successful
 live model editing, live-client hook firing and real CI-service delivery are not

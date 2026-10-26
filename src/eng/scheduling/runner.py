@@ -46,6 +46,7 @@ from eng.core.plan import (
     skipped_nodes,
 )
 from eng.core.policy import TERMINAL
+from eng.core.presets import node_allocation
 from eng.core.reuse import (
     handoff_problem,
     node_scope_digest,
@@ -124,18 +125,12 @@ class PlanRunner:
                 PlanNode(
                     spec=node,
                     effective_provider=providers[node.id],
-                    effective_budgets=resolve_budgets(
-                        config.budgets, spec.node_budgets, node.budgets
-                    ),
-                    effective_max_repairs=(
-                        node.max_repairs
-                        if node.max_repairs is not None
-                        else spec.node_max_repairs
-                        if spec.node_max_repairs is not None
-                        else config.workflow.max_repairs
-                    ),
+                    effective_budgets=budgets,
+                    effective_max_repairs=max_repairs,
+                    effective_workflow=workflow,
                 )
                 for node in spec.nodes
+                for budgets, max_repairs, workflow in [node_allocation(config, spec, node)]
             ],
             base_commit=base,
             branch=branch,
@@ -288,6 +283,8 @@ class PlanRunner:
             )
         budgets = node.effective_budgets.model_copy(deep=True)
         config = config.model_copy(deep=True)
+        if node.effective_workflow is not None:
+            config.workflow = node.effective_workflow.model_copy()
         config.workflow.max_repairs = node.effective_max_repairs
         task_spec = TaskSpec(
             description=node_description(node.spec),
@@ -306,6 +303,7 @@ class PlanRunner:
             interfaces=node.spec.interfaces,
             dependency_handoffs=dependency_handoffs or [],
             plan_attestation=attestation,
+            preset=spec.preset,
         )
         return Task(project=self.root, spec=task_spec, config=config)
 

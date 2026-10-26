@@ -110,9 +110,17 @@ SQLite launch reservations persist crashes; unknown usage blocks later launches.
 In-flight overshoot remains possible. Inspect unknown provider outcomes and use the
 existing explicit verify-only/resume path; never replay an uncertain side effect.
 
-Economy/balanced/rigorous are operator-authored examples, not implemented preset
-flags or evidence of optimality. For a small low-risk task an economy configuration
-might use one call, no repairs and concurrency 1. A balanced configuration might
-allow five calls and one repair; a rigorous one might allow eight calls and two
-repairs. Choose enough calls for mandatory planner/reviewer roles. All three retain
-the same inferred risk, independent review, human approval and required checks.
+## Presets (E5)
+
+`eng run --preset economy|balanced|rigorous` and plan `preset:` apply a named bundle
+([ADR-005](ADR-005.md)): repairs 0/1/2, E4 repair economies on/on/off and packet caps
+12,000/16,000/24,000 characters. Model calls are derived from the required roles plus
+`repairs × (1 + reviewer)`, so planning and review always fit. Explicit options, plan
+`node_budgets` and node settings override a preset. Presets are not evidence of
+optimality; all three keep the same inferred risk, independent review, human approval
+and required checks.
+
+```sh
+eng run 'Fix addition' --accept 'Addition returns the sum' --preset economy
+eng plan preview plan.yaml -p .   # shows preset, derived calls and repair economies
+```

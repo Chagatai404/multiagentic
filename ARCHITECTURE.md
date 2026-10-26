@@ -2,7 +2,7 @@
 
 Dependency direction: CLI → engine shell → subsystem contracts and adapters. The
 functional core is `core/models.py`, `core/policy.py`, `core/accounting.py`, `core/workflow.py`,
-`core/plan.py`, `core/reuse.py`, `core/routing.py` and `core/refs.py`: Pydantic
+`core/plan.py`, `core/reuse.py`, `core/routing.py`, `core/presets.py` and `core/refs.py`: Pydantic
 contracts, legal transitions, and evidence-based completion. `core/engine.py` is
 explicitly the imperative orchestration shell; it injects a Provider and Store.
 Models/policy import no provider, subprocess, filesystem execution, or storage code.
@@ -275,7 +275,9 @@ honour; providers are routed once at task/node creation and frozen per plan node
 Every decision is an event; routing never alters workflow gates. E4 adds opt-in
 `workflow.repair_headroom` (repair admission requires calls/allocations for the
 debugger and any required review) and `workflow.stop_unchanged_repairs` (repairs
-record a base digest; an unchanged tree pauses at `implemented`). E5 is deferred.
+record a base digest; an unchanged tree pauses at `implemented`). E5
+(`core/presets.py`, pure) resolves named presets beneath explicit settings, deriving
+calls from required roles; plans freeze each node's `effective_workflow`.
 
 **Integration** (`execution/integrate.py`, `scheduling/integration.py`). A completed
 node's worktree is captured as a commit object through a temporary index (the worktree is

@@ -1,5 +1,11 @@
 # Validation evidence — 2026-10-25
 
+## Efficiency E3–E5 checkpoint — 2026-10-26
+
+Explicit routing, opt-in repair economies and presets: 713 passed, 2 skipped,
+1 deselected offline on Linux; Ruff, strict mypy and package build passed. See
+`docs/efficiency/VERIFICATION_E3_E5.md` and ADR-003..005. No live/paid validation.
+
 ## Efficiency E2 checkpoint — 2026-10-26
 
 Dependency handoffs, opt-in dependency-scoped context, interface contracts and human
