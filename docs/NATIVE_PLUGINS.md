@@ -41,6 +41,16 @@ point at the same skills. Repo marketplace support and native subagents vary by 
 IDE extension, managed policy and account. This package is not a universal-directory
 publication. It does not turn a chat surface without subagents into one with them.
 
+For local development installs, use a clean archive of the reviewed commit as the
+marketplace source. The tested Codex 0.164 local installer copied ignored files
+from the source directory, including `.venv`, `node_modules`, logs and Git metadata.
+`git archive` includes only committed files and avoids carrying that development
+state into plugin caches. For example, create an unused staging directory, run
+`git archive --format=tar --output=/path/to/preview.tar HEAD`, extract it there, and
+add that staging directory to the local marketplace. Keep the directory available
+while registered; refresh from a newly reviewed commit when updating the plugin.
+The Codex/Claude skill path needs no npm or Python environment in that archive.
+
 Pi: use `pi install /absolute/path/to/reviewed/checkout` for a local preview, or install
 the Git source after merge. Requires Node 22.19+ and the Pi 1.4 SDK package family
 `@earendil-works/pi-coding-agent` and its host-provided `typebox`. Older

@@ -66,9 +66,11 @@ sequentially. Report the actual selected mode and limits before starting.
 ## Verification boundary
 
 This profile is documentation/skill integration with Orca's native control plane.
-No live Orca runtime was exercised here. Verify installed skill discovery, child
-visibility, worktree ancestry, failure/cancellation recovery and integrated checks in
-a disposable feature before relying on a particular desktop/WSL/SSH configuration.
+The initial profile was authored without a live runtime. A later Windows follow-up
+exercised a small Codex shared-checkout flow; see `docs/NATIVE_VALIDATION.md` in the
+repository. Verify installed skill discovery, child visibility, worktree ancestry,
+failure/cancellation recovery and integrated checks in a disposable feature before
+relying on a particular desktop/WSL/SSH configuration.
 Usage is only the data each agent/Orca actually reports; no cross-provider token or
 billing equivalence is assumed.
 

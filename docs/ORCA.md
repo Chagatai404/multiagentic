@@ -86,8 +86,12 @@ Before claiming live support for your setup:
    counts, elapsed time and available usage. Compare equivalent single-agent work
    before claiming a token or speed improvement.
 
-Current evidence: profile and packet integration are implemented; no Orca app/runtime
-is available in this build environment, so live Orca execution remains unverified.
+Current evidence: profile and packet integration are implemented. The initial cloud
+build had no Orca runtime. Windows follow-up registered the project, installed the
+underlying plugins, launched Codex, exercised planning gates and native
+interruption, and completed a fresh two-worker edit/check/integration smoke test.
+Separate worktrees, WSL/SSH and mixed-agent supervision remain untested. See the
+separate local setup evidence in [NATIVE_VALIDATION.md](NATIVE_VALIDATION.md).
 
 ## Official references checked 2026-10-28
 
