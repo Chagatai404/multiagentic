@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "multiagentic-eng"
 version = "1.1.0"
 description = "Provider-independent engineering orchestration with durable verification"
-readme = "README.md"
+readme = "LEGACY_CLI.md"
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.12"

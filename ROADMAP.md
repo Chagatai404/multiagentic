@@ -1,3 +1,17 @@
+# Direction: native workflows first
+
+The 2.0 beta changes the primary architecture to native plugins. Completed foundation:
+shared planning skills, portable/Claude/Codex manifests, OpenCode native integration,
+Pi SDK dispatch, compact packets, dependency/ownership checks, and recovery tests.
+
+Before a stable 2.0 release: smoke-test install → co-plan → approve → parallel edit →
+verify → cancel/resume in each target app/IDE; record versions and evidence. Measure
+single-agent vs native-parallel latency, tokens/cache and acceptance on equivalent tasks.
+Add more host adapters only where documented native capabilities justify them.
+
+Historical milestones below describe the retained external runner, not the primary
+user experience. The native plugin does not depend on completing its remaining work.
+
 # Roadmap
 
 - **M0 — delivered:** requirements, architecture, typed task/provider/project/result

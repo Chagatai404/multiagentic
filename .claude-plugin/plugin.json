@@ -1,0 +1,10 @@
+{
+  "name": "multiagentic-engineering",
+  "version": "2.0.0-beta.1",
+  "description": "Plan with the user, divide independent work, and coordinate native subagents with compact context.",
+  "author": {
+    "name": "\u00c7a\u011fatay Oktay"
+  },
+  "repository": "https://github.com/Chagatai404/multiagentic-engineering",
+  "license": "MIT"
+}

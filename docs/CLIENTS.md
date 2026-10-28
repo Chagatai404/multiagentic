@@ -1,6 +1,10 @@
+> Legacy `eng` prompt-routing setup. For native in-session plugins use
+> [NATIVE_PLUGINS.md](NATIVE_PLUGINS.md). Do not install these routing hooks for the
+> native workflow; remove existing ones during migration.
+
 # Client installation and prompt routing
 
-The [README quickstart](../README.md#quickstart-install-once-for-your-user) covers
+The [README quickstart](../LEGACY_CLI.md#quickstart-install-once-for-your-user) covers
 package installation and project checks. The installer defaults to the current OS user:
 
 ```sh

@@ -1,4 +1,46 @@
-# Architecture (M0 through M6)
+# Architecture
+
+## Native plugin path (2.0 beta)
+
+User conversation → shared skill/spec → validated DAG and packets → host-native
+workers → coordinator integration and verification. One canonical skill directory is
+packaged through root `plugin.json`, Claude/Codex compatibility manifests, OpenCode's
+plugin export and Pi's package manifest. No native adapter imports the Python runner,
+launches an agent CLI, or installs an MCP server.
+
+`skills/multiagentic-engineering/scripts/core.mjs` is a pure planning layer: contract
+validation, conservative path ownership/read dependencies, digest-bound state, ready
+waves and compact packets. `files.mjs` confines local plan/state reads. The small
+`plan.mjs` executable is a model-free validator, not a runtime agent launcher.
+
+Claude Code and Codex use their session's native tools through skills. OpenCode's
+adapter registers tools/agents/skill paths through its configuration hook, preserving
+existing user definitions; native Task/subagent tools retain execution/permissions.
+These hosts follow a protocol: ownership and state are coordinator responsibilities,
+not enforcement by an external process. A helper result is not test evidence.
+
+Pi lacks the same built-in subagent interface. Its extension creates SDK sessions in
+process with fresh histories, inherited model/thinking settings, default stored auth,
+no loaded extensions/skills, no shell, and ownership-checked edit/write tools. Repository
+context instructions remain discoverable. Parent handles checks/deletion/renames.
+The user command binds authorization to a plan digest; dispatch writes running state
+before model calls and serializes waves with a project lock. Crash locks are deliberately
+not auto-cleared. Cancellation and timeouts abort children, retain partial edits and
+block downstream work. Completed output still requires coordinator verification.
+
+Boundaries: local files/commands are trusted; authorization state is not tamper-proof.
+File guards detect invalid paths and symlinks but are not OS sandboxes (external
+concurrent mutations/hardlinks are outside the guarantee). No hard billing ceiling,
+account-shared token cap or cross-host lock enforcement is claimed. Only Pi SDK dispatch
+uses the project lock; all hosts require one coordinator per plan. Read pointers guide
+context selection, not filesystem read isolation. Current Pi custom parent-only auth
+and provider extensions are not propagated; use stored credentials or skill-only mode.
+
+The legacy runner remains a separate opt-in architecture and retains its existing
+SQLite/worktree/approval semantics; plugin state never reuses its approvals or records.
+
+## Legacy external runner (1.x)
+
 
 Dependency direction: CLI → engine shell → subsystem contracts and adapters. The
 functional core is `core/models.py`, `core/policy.py`, `core/accounting.py`, `core/workflow.py`,

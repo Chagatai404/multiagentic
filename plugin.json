@@ -1,0 +1,6 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "multiagentic-engineering",
+  "version": "2.0.0-beta.1",
+  "description": "Plan with the user, divide independent work, and coordinate native subagents with compact context."
+}

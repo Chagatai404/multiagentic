@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "id": "service-status",
+  "goal": "Show service health and deployed version as independently testable features",
+  "spec": ".plans/service-status.md",
+  "base_revision": "replace-with-inspected-git-revision",
+  "decisions": [
+    "Existing feature registration interface is stable at base_revision; each feature exports its routes and card",
+    "Health returns status ok or degraded; version returns a display-only version string"
+  ],
+  "constraints": [
+    "No dependency changes; preserve existing routes; parent owns final feature registration"
+  ],
+  "concurrency": 2,
+  "limits": {
+    "packet_chars": 6000,
+    "report_chars": 1200,
+    "max_attempts": 1,
+    "worker_timeout_seconds": 600
+  },
+  "tasks": [
+    {
+      "id": "health",
+      "objective": "Deliver a health endpoint and its card as one tested feature",
+      "depends_on": [],
+      "owns": [
+        "src/features/health/",
+        "tests/health/"
+      ],
+      "reads": [
+        "src/contracts/feature.ts"
+      ],
+      "interfaces": [
+        "Export health route and card through the existing feature interface; GET /health returns {status: ok | degraded}"
+      ],
+      "acceptance": [
+        "AC1: The feature card renders healthy, degraded, pending and network-error states from its endpoint"
+      ],
+      "checks": [
+        "Run feature tests exercising the endpoint and rendered health card together"
+      ]
+    },
+    {
+      "id": "version",
+      "objective": "Deliver a version endpoint and its card as one tested feature",
+      "depends_on": [],
+      "owns": [
+        "src/features/version/",
+        "tests/version/"
+      ],
+      "reads": [
+        "src/contracts/feature.ts"
+      ],
+      "interfaces": [
+        "Export version route and card through the existing feature interface; GET /version returns {version: string}"
+      ],
+      "acceptance": [
+        "AC2: The feature card displays the deployed version or an unavailable state"
+      ],
+      "checks": [
+        "Run feature tests exercising the version endpoint and card together"
+      ]
+    },
+    {
+      "id": "integration",
+      "objective": "Register the two verified features in the application",
+      "depends_on": [
+        "health",
+        "version"
+      ],
+      "owns": [
+        "src/api/router.ts",
+        "src/ui/App.tsx"
+      ],
+      "reads": [
+        "src/features/health/",
+        "src/features/version/"
+      ],
+      "interfaces": [
+        "Preserve the existing feature registration contract and application routes"
+      ],
+      "acceptance": [
+        "AC3: Both features work in the real application; existing routes still work"
+      ],
+      "checks": [
+        "Run application integration tests and exercise healthy, degraded and unavailable service states"
+      ]
+    }
+  ],
+  "open_questions": []
+}
