@@ -9,6 +9,8 @@
 - Add Pi in-process SDK workers with user authorization, bounded concurrency,
   cancellation and ownership-checked writes; no agent CLI subprocesses.
 - Add offline validation, CI, source attribution and migration/client smoke guidance.
+- Make Orca the preferred workspace with one-scheduler guidance, task/dispatch mapping,
+  dependency verification, worker role routing and Windows/WSL execution-host checks.
 
 # Changelog
 

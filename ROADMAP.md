@@ -4,6 +4,10 @@ The 2.0 beta changes the primary architecture to native plugins. Completed found
 shared planning skills, portable/Claude/Codex manifests, OpenCode native integration,
 Pi SDK dispatch, compact packets, dependency/ownership checks, and recovery tests.
 
+Preferred workspace: Orca. Validate Codex/Claude native-child mode first, then
+Orca-supervised mixed-agent worktrees. Keep only one scheduler and preserve the shared
+verification gate. `docs/ORCA.md` contains the setup and acceptance plan.
+
 Before a stable 2.0 release: smoke-test install → co-plan → approve → parallel edit →
 verify → cancel/resume in each target app/IDE; record versions and evidence. Measure
 single-agent vs native-parallel latency, tokens/cache and acceptance on equivalent tasks.

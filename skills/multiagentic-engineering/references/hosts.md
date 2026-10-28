@@ -6,6 +6,7 @@ execution; never emulate native tools with a coding CLI subprocess.
 
 | Host | Entry | Delegation |
 | --- | --- | --- |
+| Orca (preferred workspace) | Install this plugin in the selected Claude/Codex agent, or install its skills | Choose underlying native subagents or Orca-supervised tasks; [Orca profile](orca.md) |
 | Claude Code | Installed plugin skill; `/multiagentic-engineering:multiagentic-engineering` | Native Agent tool and bundled mae-worker/mae-reviewer definitions |
 | Codex / compatible ChatGPT surfaces | Installed plugin or `$multiagentic-engineering` | Session's native spawn/wait/message tools, when available |
 | OpenCode | Loaded skill or `/mae` | Native Task/subagent tool with mae-worker; `mae_plan` prepares packets |

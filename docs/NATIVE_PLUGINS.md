@@ -1,5 +1,9 @@
 # Native plugin guide
 
+The selected workspace is **Orca**. Start with [ORCA.md](ORCA.md), then install the
+appropriate underlying agent package below. The Orca profile defines native-subagent
+and Orca-supervised modes without introducing an external launcher.
+
 ## Design decisions
 
 | Decision | Reason |

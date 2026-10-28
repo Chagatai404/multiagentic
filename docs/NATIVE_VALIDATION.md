@@ -30,6 +30,13 @@ an initial end-to-end behavior, and treated three workers as a ceiling. The prof
 exercise assigned the shared type a single owner and deferred implementation until
 access behavior and user approval were resolved.
 
+Orca: a dedicated workspace profile maps the same approved plans to underlying
+native subagents or Orca-supervised Runs, with one scheduler and verified dependency
+gates. Orca itself is not installed here; no live runtime exercise is claimed. A fresh-context
+Orca scenario preserved the two-worker ceiling, blocked a dependent task until merge
+and checks, prohibited nested Pi dispatch, and identified WSL installation/ancestry
+checks without inventing runtime capabilities.
+
 Remaining before stable release: follow the real-client smoke procedure in
 [NATIVE_PLUGINS.md](NATIVE_PLUGINS.md), measure comparable single-agent/native-parallel
 runs, and record actual host versions, observed usage fields and acceptance results.

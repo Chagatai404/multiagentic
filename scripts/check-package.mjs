@@ -37,6 +37,6 @@ assert.ok(process.env.npm_execpath,'Run via npm run check:package');
 const packed=spawnSync(process.execPath,[process.env.npm_execpath,'pack','--dry-run','--json','--ignore-scripts'],{cwd:root,encoding:'utf8'});
 assert.equal(packed.status,0,packed.stderr);
 const entries=JSON.parse(packed.stdout)[0].files.map(f=>f.path);
-for(const f of ['plugin.json','.claude-plugin/plugin.json','.claude-plugin/marketplace.json','.codex-plugin/plugin.json','.agents/plugins/marketplace.json','adapters/pi/index.ts','adapters/opencode/index.mjs','skills/multiagentic-engineering/scripts/core.mjs','skills/interview/LICENSE','skills/ste/LICENSE','docs/NATIVE_PLUGINS.md'])assert.ok(entries.includes(f),`missing packed file: ${f}`);
+for(const f of ['plugin.json','.claude-plugin/plugin.json','.claude-plugin/marketplace.json','.codex-plugin/plugin.json','.agents/plugins/marketplace.json','adapters/pi/index.ts','adapters/opencode/index.mjs','skills/multiagentic-engineering/scripts/core.mjs','skills/interview/LICENSE','skills/ste/LICENSE','docs/NATIVE_PLUGINS.md','docs/ORCA.md','skills/multiagentic-engineering/references/orca.md'])assert.ok(entries.includes(f),`missing packed file: ${f}`);
 assert.ok(!entries.some(f=>f.startsWith('src/eng/')||f.startsWith('node_modules/')));
 console.log(JSON.stringify({package:pkg.name,version:pkg.version,packed_files:entries.length,skill_metadata_characters:metadataChars,example_packet_characters:view.packets.map(p=>JSON.stringify(p).length),live_hosts:'not tested'},null,2));

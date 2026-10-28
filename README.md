@@ -3,6 +3,11 @@
 Plan with your coding agent, split independent work, and coordinate native workers
 inside your existing Claude Code, Codex, OpenCode or Pi session.
 
+**Preferred workspace: Orca.** Use the [Orca setup and execution plan](docs/ORCA.md)
+with one coordinator and one scheduling layer. Start with native subagents inside
+Claude Code/Codex; use Orca-supervised worktrees when you need separate visible
+workers or mixed agents.
+
 The plugin owns the workflow: **clarify → agree interfaces → plan dependencies →
 run independent slices → integrate → verify**. Your host owns the model, credentials,
 tools and session. Planning decisions stay with you. There is no external agent
@@ -32,6 +37,7 @@ preview-branch installation and capability limits.
 
 | Host | Package / entry point | Worker execution |
 | --- | --- | --- |
+| Orca | Underlying agent plugin/skills; [workspace profile](docs/ORCA.md) | Native subagents or Orca-supervised tasks, one scheduler |
 | Claude Code | Marketplace plugin; `/multiagentic-engineering:multiagentic-engineering` | Native Agent tool, worker/reviewer definitions |
 | Codex | Repo marketplace plugin; `$multiagentic-engineering` | Native collaboration tools when exposed |
 | OpenCode | Native JavaScript plugin; `/mae` | Native Task/subagent tools |

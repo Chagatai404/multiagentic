@@ -39,6 +39,17 @@ and provider extensions are not propagated; use stored credentials or skill-only
 The legacy runner remains a separate opt-in architecture and retains its existing
 SQLite/worktree/approval semantics; plugin state never reuses its approvals or records.
 
+### Orca workspace profile
+
+Orca is the selected IDE, layered over the existing host packages. Its profile selects
+one scheduler: the underlying coding agent's native subagents, or Orca's supervised
+Run/task/dispatch layer. The package supplies planning and mapping guidance and relies
+on Orca's runtime-provided control guide; it assumes no separate JS plugin API. App
+completion never substitutes for coordinator verification. Worker packets select the
+worker role immediately, so Pi or other host adapters cannot create a nested worker
+pool. The concurrency budget applies across the run. No live Orca certification is
+claimed; see `docs/ORCA.md` for worktree/account/WSL and acceptance requirements.
+
 ## Legacy external runner (1.x)
 
 

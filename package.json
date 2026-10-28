@@ -28,7 +28,8 @@
     "README.md",
     "docs/NATIVE_PLUGINS.md",
     "docs/SKILL_SOURCES.md",
-    "docs/NATIVE_VALIDATION.md"
+    "docs/NATIVE_VALIDATION.md",
+    "docs/ORCA.md"
   ],
   "pi": {
     "extensions": [

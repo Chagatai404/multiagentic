@@ -5,9 +5,14 @@ description: Plan and implement substantial coding tasks with independent native
 
 # Multiagentic engineering
 
+If assigned a `mae/1` worker packet, implement only that slice and return its handoff;
+skip coordinator planning and delegation. The following workflow is for the coordinator.
+
 Keep the conversation's agent as coordinator. Use the host's native delegation tools;
 never start another agent CLI, `eng`, a background daemon, or a paid API to emulate them.
-Read only [the current host adapter](references/hosts.md). If delegation is absent,
+Read only [the current host adapter](references/hosts.md). In Orca, also read
+[the Orca profile](references/orca.md) to select exactly one scheduling layer.
+If delegation is absent,
 say so and execute the same plan sequentially when implementation is authorized.
 
 ## Plan with the user
