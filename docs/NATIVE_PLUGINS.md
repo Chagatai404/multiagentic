@@ -25,7 +25,7 @@ into one planning flow with explicit acceptance coverage and open-decision gates
 ## Installation and preview branches
 
 Install from a reviewed checkout when evaluating the PR before it is merged. Use
-`agent/codex/native-plugins` as the preview branch for this change; `main` remains the
+`feat/native-agent-workflows` as the preview branch for this change; `main` remains the
 previous release until a maintainer merges it.
 
 Claude Code: add the absolute checkout path with `/plugin marketplace add /path/to/checkout`,
@@ -34,7 +34,7 @@ marketplace supports normal GitHub installation after merge. The package supplie
 skill plus `mae-worker` and `mae-reviewer`; exact names in the Agent menu may include
 the plugin namespace. Follow the client's normal activation/reload instructions.
 
-Codex: `codex plugin marketplace add Chagatai404/multiagentic-engineering --ref agent/codex/native-plugins`,
+Codex: `codex plugin marketplace add Chagatai404/multiagentic-engineering --ref feat/native-agent-workflows`,
 then select the plugin in `/plugins`. A local checkout can also be added by path.
 The root Agent Plugins manifest and `.codex-plugin/plugin.json` compatibility manifest
 point at the same skills. Repo marketplace support and native subagents vary by app,
