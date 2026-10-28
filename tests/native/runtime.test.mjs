@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, writeFile, rm, symlink } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, realpath, writeFile, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { authorize, dispatch, projectLock } from '../../adapters/shared/runtime.mjs';
@@ -55,7 +55,7 @@ test('paths cannot escape via traversal or symlink; internal write aliases rejec
  await mkdir(join(root,'real'));await writeFile(join(root,'real/file'),'original');
  try {await symlink(join(root,'real'),join(root,'alias'),'junction');}catch(e){if(e.code==='EPERM'){t.skip('symlinks unavailable');return;}throw e;}
  await assert.rejects(writablePath(root,'alias/file'),/symlink/);
- assert.equal(await writablePath(root,'new/sub/file'),join(root,'new/sub/file'));
+ assert.equal(await writablePath(root,'new/sub/file'),join(await realpath(root),'new/sub/file'));
  await assert.rejects(loadPlan(root,path,'../state.json'),/escapes/);
 });
 

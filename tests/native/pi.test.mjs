@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import extension, { createOwnedTools } from '../../adapters/pi/index.ts';
@@ -21,4 +21,16 @@ test('real Pi write/edit tools enforce assigned paths before mutation',async t=>
  assert.equal(await readFile(join(root,'src/owned.txt'),'utf8'),'after');
  await assert.rejects(write.execute('3',{path:'src/sibling.txt',content:'bad'},undefined,undefined,{}),/Outside task ownership/);
  await assert.rejects(readFile(join(root,'src/sibling.txt')),/ENOENT/);
+});
+
+test('real Pi tools accept a project opened through a directory alias',async t=>{
+ const root=await mkdtemp(join(tmpdir(),'mae-alias-'));t.after(()=>rm(root,{recursive:true,force:true}));
+ const real=join(root,'project'),alias=join(root,'alias');await mkdir(real);
+ await symlink(real,alias,process.platform==='win32'?'junction':'dir');
+ const tools=createOwnedTools(alias,['src/owned.txt']);
+ await tools.find(x=>x.name==='write').execute('1',{path:'src/owned.txt',content:'before'},undefined,undefined,{});
+ await tools.find(x=>x.name==='edit').execute('2',{path:'src/owned.txt',edits:[{oldText:'before',newText:'after'}]},undefined,undefined,{});
+ assert.equal(await readFile(join(real,'src/owned.txt'),'utf8'),'after');
+ await assert.rejects(tools.find(x=>x.name==='write').execute('3',{path:'src/sibling.txt',content:'bad'},undefined,undefined,{}),/Outside task ownership/);
+ await assert.rejects(readFile(join(real,'src/sibling.txt')),/ENOENT/);
 });

@@ -1,4 +1,5 @@
 import { relative, sep } from 'node:path';
+import { realpath } from 'node:fs/promises';
 import { Type } from 'typebox';
 import {
   createAgentSession, createEditTool, createWriteTool, DefaultResourceLoader,
@@ -17,8 +18,11 @@ export function createOwnedTools(cwd: string, ownedPaths: string[]): ToolDefinit
     name: base.name, label: base.label, description: base.description, parameters: base.parameters,
     async execute(id, params, abortSignal, onUpdate) {
       if (!params || typeof params !== 'object' || !('path' in params) || typeof params.path !== 'string') throw new Error('Missing file path');
-      const target = await writablePath(cwd, params.path);
-      const path = relative(cwd, target).split(sep).join('/');
+      // writablePath canonicalizes its root (including Windows 8.3 aliases).
+      // Compute ownership relative to that same identity, not the launch spelling.
+      const root = await realpath(cwd);
+      const target = await writablePath(root, params.path);
+      const path = relative(root, target).split(sep).join('/');
       if (!owns(ownedPaths, path)) throw new Error(`Outside task ownership: ${path}`);
       // Execute the exact canonical path we checked, not SDK-specific shorthand.
       return base.execute(id, { ...params, path: target } as never, abortSignal, onUpdate);
