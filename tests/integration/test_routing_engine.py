@@ -65,7 +65,7 @@ def test_models_follow_routes_and_escalation_reroutes_later_roles(repo: Path) ->
     # The edit touches a storage path, escalating risk to medium so review becomes due.
     provider = FakeProvider({"answer.txt": "42", "storage/notes.txt": "x"})
     store, task = run_task(repo, provider)
-    assert task.state == State.COMPLETED
+    assert task.state == State.COMPLETED, task.model_dump(mode="json")
     models = [(r.role, r.model) for r in store.invocations(task.id)]
     assert models == [(Role.ENGINEER, "mini"), (Role.REVIEWER, "strong")]
     routed = kinds(store, task.id, "model_routed")
@@ -78,7 +78,7 @@ def test_models_follow_routes_and_escalation_reroutes_later_roles(repo: Path) ->
 def test_explicit_task_model_wins_over_routes(repo: Path) -> None:
     configure(repo, routing=ROUTES)
     store, task = run_task(repo, FakeProvider({"answer.txt": "42"}), model="pinned")
-    assert task.state == State.COMPLETED
+    assert task.state == State.COMPLETED, task.model_dump(mode="json")
     assert [r.model for r in store.invocations(task.id)] == ["pinned"]
     assert kinds(store, task.id, "model_routed") == []
 
@@ -90,7 +90,7 @@ class NoModelProvider(FakeProvider):
 def test_routes_the_provider_cannot_honour_are_skipped(repo: Path) -> None:
     configure(repo, routing=ROUTES, role_models={"engineer": "configured"})
     store, task = run_task(repo, NoModelProvider({"answer.txt": "42"}))
-    assert task.state == State.COMPLETED
+    assert task.state == State.COMPLETED, task.model_dump(mode="json")
     assert [r.model for r in store.invocations(task.id)] == ["configured"]
     (skipped,) = kinds(store, task.id, "route_skipped")
     assert skipped["route"] == "cheap-small" and "no model selection" in skipped["reason"]
@@ -98,7 +98,7 @@ def test_routes_the_provider_cannot_honour_are_skipped(repo: Path) -> None:
 
 def test_no_routes_keeps_existing_selection(repo: Path) -> None:
     store, task = run_task(repo, FakeProvider({"answer.txt": "42"}))
-    assert task.state == State.COMPLETED
+    assert task.state == State.COMPLETED, task.model_dump(mode="json")
     assert [r.model for r in store.invocations(task.id)] == [None]
     assert kinds(store, task.id, "model_routed") == kinds(store, task.id, "route_skipped") == []
 
