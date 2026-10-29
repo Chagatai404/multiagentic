@@ -48,6 +48,18 @@ class ExtendedLimits(ctypes.Structure):
     ]
 
 
+class ThreadEntry(ctypes.Structure):
+    _fields_ = [
+        ("size", wintypes.DWORD),
+        ("usage", wintypes.DWORD),
+        ("thread_id", wintypes.DWORD),
+        ("process_id", wintypes.DWORD),
+        ("base_priority", wintypes.LONG),
+        ("delta_priority", wintypes.LONG),
+        ("flags", wintypes.DWORD),
+    ]
+
+
 class WindowsJob:
     kernel: Any
     handle: Any
@@ -100,3 +112,54 @@ class WindowsJob:
         if self.handle:
             self.kernel.CloseHandle(self.handle)
             self.handle = None
+
+    def resume(self, pid: int) -> None:
+        """Resume the sole primary thread of a child created with CREATE_SUSPENDED.
+
+        asyncio/subprocess closes CreateProcess's primary-thread handle. Use the
+        documented Tool Help APIs to find it after job assignment, before any child
+        code can exit or spawn descendants outside the job.
+        """
+        if sys.platform != "win32":
+            raise OSError("WindowsJob is only available on Windows")
+        kernel = self.kernel
+        kernel.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+        kernel.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+        for name in ("Thread32First", "Thread32Next"):
+            function = getattr(kernel, name)
+            function.argtypes = [wintypes.HANDLE, ctypes.POINTER(ThreadEntry)]
+            function.restype = wintypes.BOOL
+        kernel.OpenThread.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel.OpenThread.restype = wintypes.HANDLE
+        kernel.ResumeThread.argtypes = [wintypes.HANDLE]
+        kernel.ResumeThread.restype = wintypes.DWORD
+        snapshot = kernel.CreateToolhelp32Snapshot(0x00000004, 0)  # TH32CS_SNAPTHREAD
+        if snapshot == wintypes.HANDLE(-1).value:
+            raise ctypes.WinError(ctypes.get_last_error())
+        try:
+            entry = ThreadEntry()
+            entry.size = ctypes.sizeof(entry)
+            found = kernel.Thread32First(snapshot, ctypes.byref(entry))
+            threads = []
+            while found:
+                if entry.process_id == pid:
+                    threads.append(entry.thread_id)
+                entry.size = ctypes.sizeof(entry)
+                found = kernel.Thread32Next(snapshot, ctypes.byref(entry))
+            if ctypes.get_last_error() != 18:  # ERROR_NO_MORE_FILES
+                raise ctypes.WinError(ctypes.get_last_error())
+            if len(threads) != 1:
+                raise OSError("Expected one primary thread in suspended child")
+            thread = kernel.OpenThread(0x0002, False, threads[0])  # THREAD_SUSPEND_RESUME
+            if not thread:
+                raise ctypes.WinError(ctypes.get_last_error())
+            try:
+                count = kernel.ResumeThread(thread)
+                if count == 0xFFFFFFFF:
+                    raise ctypes.WinError(ctypes.get_last_error())
+                if count != 1:
+                    raise OSError("Unexpected primary-thread suspend count")
+            finally:
+                kernel.CloseHandle(thread)
+        finally:
+            kernel.CloseHandle(snapshot)

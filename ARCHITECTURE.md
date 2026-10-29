@@ -190,7 +190,10 @@ resolves supported native or legacy JS entries. npm verification shims resolve o
 supported layouts to Node plus npm-cli.js; unsupported layouts are UNAVAILABLE. npm
 executes package scripts through its own shell, so review scripts before confirmation.
 Taskkill is a startup fallback; Windows Job Objects own child-process lifetime and
-kill remaining descendants when their handle closes. POSIX children run in their own
+kill remaining descendants when their handle closes. Windows children start suspended;
+the runner assigns the job and resumes the primary thread through the documented
+Tool Help / ResumeThread APIs before child code runs. Assignment or resume failure
+stops the child and blocks verification. POSIX children run in their own
 process group. Checks receive a small environment allowlist, not provider credentials.
 Provider auth uses the installed CLI's normal mechanism. Context rejects
 escaping/symlink paths and protected files. Provider output is untrusted and strictly

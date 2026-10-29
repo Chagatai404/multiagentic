@@ -131,7 +131,9 @@ async def run_process(
     started = time.monotonic()
     options: dict[str, object] = {}
     if sys.platform == "win32":
-        options["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+        # CREATE_SUSPENDED keeps even an instant check alive until its process tree
+        # belongs to our job. Attaching after an ordinary spawn races child exit.
+        options["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | 0x00000004
     else:
         options["start_new_session"] = True
     try:
@@ -153,8 +155,9 @@ async def run_process(
     if sys.platform == "win32":
         try:
             job = WindowsJob(process.pid)
+            job.resume(process.pid)
         except OSError as error:
-            await stop_tree(process)
+            await stop_tree(process, job)
             return ProcessResult(
                 None, "", redact(str(error)), time.monotonic() - started, "process_isolation"
             )
