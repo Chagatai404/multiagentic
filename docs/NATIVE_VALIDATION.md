@@ -113,3 +113,23 @@ SDKs pin affected versions; npm's suggested forced remediation downgrades the
 host packages outside the validated API generation. No forced downgrade or
 unvalidated dependency override was applied. These audit findings remain open;
 passing functional checks do not resolve them.
+
+## Timing-test follow-up — 2026-10-29
+
+The separate full local Windows run finished with 713 passed, 2 skipped and one
+failure in `test_timeout_preserves_observed_codex_usage`. Its 0.8-second deadline
+could expire before the fixture interpreter printed any usage. Leaving that
+unobserved value unknown was correct provider behavior; the fixture assumed fast
+startup while claiming to test preservation of already-observed usage.
+
+The test now advances only the transport's test clock after a real streamed usage
+event has been parsed. Asyncio retains its real scheduling clock, the subprocess
+and cleanup remain real, and a 10-second real-time watchdog bounds missing output.
+Both immediate startup and an explicit one-second delay are covered. Production
+timeouts and provider behavior are unchanged.
+
+The local stream/process suites passed all 52 tests, and an independent focused
+review found no issues. The 22 native tests, TypeScript, package validation, Ruff
+and strict mypy (57 sources) also passed again. Full validation of the final
+revision is gated on the Linux/Windows CI matrices linked from PR #3; this does
+not relabel the earlier failed local full run as a pass.
