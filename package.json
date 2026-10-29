@@ -1,0 +1,68 @@
+{
+  "name": "multiagentic-engineering",
+  "version": "2.0.0-beta.1",
+  "description": "Plan with the user, divide independent work, and coordinate native subagents with compact context.",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Chagatai404/multiagentic-engineering.git"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "exports": {
+    ".": "./adapters/opencode/index.mjs"
+  },
+  "files": [
+    "plugin.json",
+    ".claude-plugin/",
+    ".codex-plugin/",
+    ".agents/plugins/",
+    "skills/",
+    "agents/",
+    "adapters/",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
+    "UPSTREAM.json",
+    "README.md",
+    "docs/NATIVE_PLUGINS.md",
+    "docs/SKILL_SOURCES.md",
+    "docs/NATIVE_VALIDATION.md",
+    "docs/ORCA.md"
+  ],
+  "pi": {
+    "extensions": [
+      "./adapters/pi/index.ts"
+    ],
+    "skills": [
+      "./skills"
+    ]
+  },
+  "scripts": {
+    "test": "node --test tests/native/*.test.mjs",
+    "check": "tsc --noEmit",
+    "check:package": "node scripts/check-package.mjs"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    },
+    "typebox": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "1.4.0",
+    "typebox": "^1.0.0",
+    "typescript": "^5.9.0",
+    "@types/node": "^24.0.0"
+  },
+  "dependencies": {
+    "@opencode-ai/plugin": "1.19.5"
+  }
+}

@@ -8,6 +8,10 @@ __pycache__/
 .mypy_cache/
 build/
 dist/
+node_modules/
+*.tgz
+.plans/*.state.json
+.plans/.mae-dispatch.lock
 .engineering/state/
 .engineering/worktrees/
 .engineering/artifacts/

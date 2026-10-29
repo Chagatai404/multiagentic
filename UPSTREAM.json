@@ -1,0 +1,40 @@
+{
+  "jmo-skills": {
+    "repository": "https://github.com/23jmo/jmo-skills",
+    "revision": "6082bf2c472857d6cfda48995ab985b69345aac6",
+    "skills": {
+      "interview": "adapted",
+      "ste": "unchanged"
+    },
+    "license": "MIT"
+  },
+  "pi-sdk-reference": {
+    "repository": "https://github.com/earendil-works/pi",
+    "revision": "2eb6a8d15ff038d0ac9565f760720e5bec9b4a3e",
+    "version": "1.4.0",
+    "copied_code": false
+  },
+  "mattpocock-skills": {
+    "repository": "https://github.com/mattpocock/skills",
+    "revision": "59db609eb1e18aaf59b63284d0e52255aff0c63c",
+    "license": "MIT",
+    "adapted_practices": [
+      "grilling",
+      "grill-with-docs",
+      "domain-modeling",
+      "to-spec",
+      "to-tickets",
+      "implement-spec",
+      "codebase-design",
+      "tdd",
+      "implement",
+      "code-review",
+      "writing-for-agents",
+      "handoff"
+    ],
+    "targets": [
+      "skills/interview",
+      "skills/multiagentic-engineering"
+    ]
+  }
+}

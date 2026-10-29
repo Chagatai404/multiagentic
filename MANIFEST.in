@@ -1,4 +1,4 @@
-include AGENTS.md ARCHITECTURE.md CHANGELOG.md ROADMAP.md
+include LEGACY_CLI.md AGENTS.md ARCHITECTURE.md CHANGELOG.md ROADMAP.md
 recursive-include docs *.md *.yaml *.json
 recursive-include benchmarks *.py *.md
 recursive-include tests *.py

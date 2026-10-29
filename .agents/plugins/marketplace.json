@@ -1,0 +1,17 @@
+{
+  "name": "multiagentic-engineering",
+  "plugins": [
+    {
+      "name": "multiagentic-engineering",
+      "source": {
+        "source": "local",
+        "path": "./"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

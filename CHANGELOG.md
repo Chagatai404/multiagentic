@@ -1,3 +1,17 @@
+# Native plugin 2.0.0-beta.1 (unreleased)
+
+- Make native in-session workflows the primary experience for Claude Code, Codex,
+  OpenCode and Pi; retain the external eng 1.x runner as an explicit legacy option.
+- Combine JMO and Matt Pocock planning practices: dependency-ordered interview,
+  canonical spec, vertical slices, public behavior tests and spec/standards review.
+- Add deterministic DAG/read-write ownership validation, bounded context packets,
+  unresolved-decision gates, digest-bound recovery and native adapter packages.
+- Add Pi in-process SDK workers with user authorization, bounded concurrency,
+  cancellation and ownership-checked writes; no agent CLI subprocesses.
+- Add offline validation, CI, source attribution and migration/client smoke guidance.
+- Make Orca the preferred workspace with one-scheduler guidance, task/dispatch mapping,
+  dependency verification, worker role routing and Windows/WSL execution-host checks.
+
 # Changelog
 
 ## 1.1.0 - 2026-10-26

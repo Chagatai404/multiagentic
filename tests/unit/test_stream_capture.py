@@ -2,6 +2,8 @@ import asyncio
 import json
 import sys
 from pathlib import Path
+from time import monotonic
+from types import SimpleNamespace
 
 import pytest
 
@@ -217,12 +219,32 @@ def test_oversized_protocol_explicit_and_late_codex_usage(monkeypatch: pytest.Mo
     assert not buffer.parts
 
 
+@pytest.mark.parametrize("startup_seconds", [0, 1.0])
 def test_timeout_preserves_observed_codex_usage(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, startup_seconds: float
 ) -> None:
+    # Exercise the real stream and process cleanup, but start the timeout only
+    # after usage is observed. Interpreter startup speed is not this contract.
+    # Patch only the transport clock, leaving asyncio's scheduling clock intact.
+    observed = False
+    started = monotonic()
+    original_feed = EventParser.feed
+
+    def observe_usage(parser: EventParser, text: str) -> None:
+        nonlocal observed
+        original_feed(parser, text)
+        observed = parser.usage.output_tokens == 9
+
+    def transport_clock() -> float:
+        # Missing fixture output must still terminate under a real-time watchdog.
+        return started + (2.0 if observed or monotonic() - started >= 10 else 0.0)
+
+    monkeypatch.setattr(EventParser, "feed", observe_usage)
+    monkeypatch.setattr("eng.execution.process.time", SimpleNamespace(monotonic=transport_clock))
     script = tmp_path / "provider.py"
     script.write_text(
-        'import time\nprint(\'{"type":"turn.completed","usage":{"output_tokens":9}}\','
+        f"import time\ntime.sleep({startup_seconds})\n"
+        'print(\'{"type":"turn.completed","usage":{"output_tokens":9}}\','
         "flush=True)\ntime.sleep(30)\n"
     )
     monkeypatch.setattr("eng.providers.codex.codex_command", lambda: [sys.executable, str(script)])
@@ -230,6 +252,7 @@ def test_timeout_preserves_observed_codex_usage(
         task_id="t", execution_id="e", workspace=tmp_path, prompt="x", timeout_seconds=0.8
     )
     result = asyncio.run(CodexProvider().execute(request, tmp_path / "a", lambda: False))
+    assert observed, "Fixture never delivered its usage event before the watchdog"
     assert result.status == "timeout"
     assert result.usage.output_tokens == 9
     assert (tmp_path / "a/provider.jsonl").exists()

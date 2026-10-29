@@ -29,3 +29,17 @@ useful, never the entire vault. No secrets or session logs in Obsidian. Graphify
 code relationships, not vault knowledge. Claude-mem is Claude Code's session memory.
 See the user's personal instructions for Research OS tasks; this package's engineering
 state is separate from Research OS and human knowledge records.
+
+## Native plugin development (2.0 beta)
+
+The primary product is now the native plugin; the CLI requirements above apply to
+legacy `src/eng` behavior. Keep native adapters free of coding-CLI subprocesses and
+`eng` runtime dependencies. Native plans live in `.plans/`; user decisions and native
+host permissions apply. Max native concurrency is three. Shared ownership includes
+read/write dependencies; one coordinator owns state and integration.
+
+Run `npm test`, `npm run check`, and `npm run check:package` for plugin changes.
+Keep skills canonical under `skills/`, preserve upstream licensing, and distinguish
+protocol guidance from runtime enforcement. Do not claim live host execution from
+mock transports, SDK registration, manifests, or offline tests. Publishing a review
+branch/PR when requested is separate from any plugin's runtime permissions.
