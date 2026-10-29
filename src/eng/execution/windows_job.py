@@ -120,6 +120,8 @@ class WindowsJob:
         documented Tool Help APIs to find it after job assignment, before any child
         code can exit or spawn descendants outside the job.
         """
+        if sys.platform != "win32":
+            raise OSError("WindowsJob is only available on Windows")
         kernel = self.kernel
         kernel.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
         kernel.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
