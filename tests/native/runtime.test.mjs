@@ -32,10 +32,20 @@ test('worker error blocks dependents and retains partial outcome',async t=>{
  assert.equal((await loadPlan(root,path)).view.stopped,true);
  await assert.rejects(dispatch(root,path,async()=>assert.fail()),/No ready/);
 });
-test('cancellation reaches all workers and never marks completion',async t=>{
+test('cancellation reaches all workers and never marks completion',{timeout:10_000},async t=>{
  const {root,path}=await fixture(t);await authorize(root,path);const controller=new AbortController();
- const run=dispatch(root,path,async(p,signal)=>{await new Promise(resolve=>signal.addEventListener('abort',resolve,{once:true}));return {summary:'partial work'};},controller.signal);
- setTimeout(()=>controller.abort(),30);const result=await run;assert.ok(result.results.every(x=>x.status==='blocked'));
+ let started=0,aborted=0;
+ const result=await dispatch(root,path,async(p,signal)=>{
+  await new Promise(resolve=>{
+   signal.addEventListener('abort',()=>{aborted++;resolve();},{once:true});
+   // Cancel only after both real workers have subscribed, independent of I/O speed.
+   if(++started===2)controller.abort();
+  });return {summary:'partial work'};
+ },controller.signal);
+ assert.equal(started,2);assert.equal(aborted,2);assert.equal(result.results.length,2);
+ assert.ok(result.results.every(x=>x.status==='blocked'));
+ const {state}=await loadPlan(root,path);
+ assert.equal(state.tasks.health.status,'blocked');assert.equal(state.tasks.version.status,'blocked');
 });
 test('timeout blocks workers, and oversize reports fail explicitly',async t=>{
  const {root,path}=await fixture(t);const p=structuredClone(example);p.limits.worker_timeout_seconds=1;await writeFile(join(root,path),JSON.stringify(p));await authorize(root,path);
