@@ -59,6 +59,14 @@ use the skill-only installation there. Start with `/mae <goal>`, review the save
 then run `/mae-approve .plans/<name>.json` and ask the agent to execute it. Approval is
 per plan digest; a materially changed plan needs review again.
 
+Pi and TypeBox remain optional host-provided peers. Audit and update the host's
+installation separately: this plugin cannot replace dependencies in an existing Pi
+process. Repository overrides patch external npm-resolved development dependencies
+only; npm does not apply a dependency package's overrides to its consumer. Pi 1.4.0's
+CLI/RPC bundle embeds a separate affected Undici implementation, so even a zero
+npm audit result does not make that host safe. This package does not ship or invoke
+that CLI bundle; fixing it requires an upstream host update/rebuild.
+
 OpenCode: in the reviewed checkout run `npm install --omit=dev --ignore-scripts`. Merge
 this entry into the existing configuration; use an absolute file URL for your OS:
 
@@ -73,6 +81,9 @@ On Windows the URL is `file:///C:/path/to/multiagentic-engineering/adapters/open
 URL-encode spaces in file URLs. The adapter is checked against `@opencode-ai/plugin`
 1.19.5. Its config hook adds the absolute skills directory and native worker/reviewer
 agents only if those names do not already exist. It does not overwrite config files.
+The SDK is used for development type checks. The runtime tool definition uses its
+plain-object contract with a directly pinned Zod schema, so production installs do
+not pull in the SDK's unused Effect/TOML dependency tree.
 Run `/mae <goal>` or ask for the skill; use `mae_plan` to obtain validated packets, then
 the native Task/subagent interface to dispatch them. Review permissions through the
 host. Later OpenCode API generations may need adapter updates.

@@ -42,7 +42,8 @@
   "scripts": {
     "test": "node --test tests/native/*.test.mjs",
     "check": "tsc --noEmit",
-    "check:package": "node scripts/check-package.mjs"
+    "check:package": "node scripts/check-package.mjs",
+    "check:consumer": "node scripts/check-consumer.mjs"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
@@ -58,11 +59,23 @@
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "1.4.0",
+    "@opencode-ai/plugin": "1.19.5",
     "typebox": "^1.0.0",
     "typescript": "^5.9.0",
     "@types/node": "^24.0.0"
   },
   "dependencies": {
-    "@opencode-ai/plugin": "1.19.5"
+    "zod": "4.6.7"
+  },
+  "overrides": {
+    "@opencode-ai/plugin@1.19.5": {
+      "zod": "4.6.7",
+      "effect": {
+        "toml": "5.0.1"
+      }
+    },
+    "@earendil-works/pi-coding-agent@1.4.0": {
+      "undici": "8.12.3"
+    }
   }
 }

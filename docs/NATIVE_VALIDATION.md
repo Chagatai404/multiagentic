@@ -111,8 +111,8 @@ The locked dependency audit reported six affected package entries (five high,
 one moderate), including transitive `toml`, `zod` and `undici` advisories. The host
 SDKs pin affected versions; npm's suggested forced remediation downgrades the
 host packages outside the validated API generation. No forced downgrade or
-unvalidated dependency override was applied. These audit findings remain open;
-passing functional checks do not resolve them.
+unvalidated dependency override was applied at that checkpoint. The findings were
+open then; see the SDK dependency follow-up below for the subsequent remediation.
 
 ## Timing-test follow-up — 2026-10-29
 
@@ -133,3 +133,61 @@ review found no issues. The 22 native tests, TypeScript, package validation, Ruf
 and strict mypy (57 sources) also passed again. Full validation of the final
 revision is gated on the Linux/Windows CI matrices linked from PR #3; this does
 not relabel the earlier failed local full run as a pass.
+
+## SDK dependency follow-up — 2026-10-29
+
+The six audit entries were three vulnerable leaves and three parent-package reports:
+TOML 4.3.0 (Effect/OpenCode SDK), Zod 4.1.8 (OpenCode SDK), and Undici 8.10.2
+(Pi SDK). Both SDK API versions are retained. The external npm-resolved development
+dependencies now scope overrides to TOML 5.0.1, Zod 4.6.7 and Undici 8.12.3.
+OpenCode's runtime only used
+the SDK's identity `tool` helper and Zod re-export. A plain tool definition with
+direct Zod preserves that contract while keeping the SDK/Effect/TOML tree out of
+production installs; the real SDK still checks the adapter's types.
+
+`npm audit --json` now reports zero vulnerabilities. `npm run check:consumer`
+packs the real archive, installs it outside the checkout with development packages
+omitted, audits that independent install, and imports/registers the plugin. It
+asserts that only this package and Zod are installed. That production audit also
+reports zero. CI checks both development audits and production consumers on Linux
+and Windows; consumers cover Node 20 and 24 without installing the development SDKs.
+Pi's host-owned dependencies remain outside this package's control, including
+opaque code embedded in its CLI/RPC bundle. Independent review found that Pi
+1.4.0's `dist/bundle/chunks/chunk-MM3LKT73.js` still accepts incorrect integrity
+hashes with uppercase/mixed-case SHA256 names after its dispatcher is installed.
+An offline `data:`-URL probe confirmed this; the patched external dispatcher
+rejects all three case variants. The adapter imports the unbundled SDK entrypoint
+(`dist/index.js` / `core/sdk.js`), which does not load that chunk or install its
+global fetch. The shipped plugin contains neither SDK nor CLI bundle. A zero npm
+audit therefore closes the six lockfile reports, not this upstream embedded-host
+vulnerability. A host update/rebuild is required before treating that Pi CLI/RPC
+runtime as remediated; live host safety is not certified here.
+
+Five bounded regression tests failed against the original dependency tree and
+pass against the patched tree. They check array/set limit short-circuiting,
+out-of-range decimal/hex/binary TOML rejection, forwarding of the custom TLS
+verifier into Undici's per-origin pool, and valid/invalid integrity hashes with
+uppercase, mixed-case and lowercase algorithm names. Valid collections, structured
+TOML, HTTP responses and correct integrity hashes remain accepted. These are
+focused boundary checks: the TOML test does not reproduce all quadratic parser
+advisories, and the TLS test checks callback forwarding rather than a certificate
+handshake. Audit closure additionally depends on the patched upstream releases.
+
+All 28 native tests, TypeScript and package-content checks pass locally. OpenCode
+tests execute the example plan through the real exported tool, reject malformed
+plans/traversal and retain user configuration. Pi's existing SDK/tool tests pass.
+The full suite also exposed a cancellation-test race: its 30 ms timer could fire
+before workers started. The test now cancels after both real worker subscriptions
+exist and checks both persisted blocked outcomes; production behavior is unchanged.
+Ruff and strict mypy (57 sources) pass. Full Python and platform validation remains
+gated on the final PR's CI. No paid model or live OpenCode/Pi client test was run.
+
+Advisory sources: [TOML arrays](https://github.com/advisories/GHSA-4qx8-w7c3-pj3p),
+[TOML dotted keys](https://github.com/advisories/GHSA-9j65-hcg3-gc64),
+[TOML integers](https://github.com/advisories/GHSA-9qmh-m7c6-f92p),
+[Zod collections](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5),
+[Undici TLS forwarding](https://github.com/advisories/GHSA-2m5v-pch6-74hx), and
+[Undici integrity](https://github.com/advisories/GHSA-f72v-6w45-q472).
+The complete advisory list is available from the original audit JSON; those last
+two regressions represent only two of the eight Undici advisories. See also
+[npm override scope](https://docs.npmjs.com/cli/v11/configuring-npm/package-json/#overrides).

@@ -1,6 +1,6 @@
 // @ts-check
 import { fileURLToPath } from 'node:url';
-import { tool } from '@opencode-ai/plugin';
+import { z } from 'zod';
 import { loadPlan } from '../../skills/multiagentic-engineering/scripts/files.mjs';
 import { workerPrompt, reviewerPrompt } from '../shared/prompts.mjs';
 
@@ -22,14 +22,14 @@ const MultiagenticEngineering = async () => {
       config.command.mae ??= { description: 'Plan and coordinate independent native agents', template: 'Use the multiagentic-engineering skill. Plan with me before implementation. $ARGUMENTS' };
     },
     tool: {
-      mae_plan: tool({
+      mae_plan: {
         description: 'Validate an engineering plan and return the next independent native-worker packets. Does not execute workers or approve a plan.',
-        args: { path: tool.schema.string().describe('Project-relative plan JSON path') },
+        args: { path: z.string().describe('Project-relative plan JSON path') },
         async execute({ path }, context) {
           const { view } = await loadPlan(context.directory, path);
           return JSON.stringify(view);
         },
-      }),
+      },
     },
   };
 };
